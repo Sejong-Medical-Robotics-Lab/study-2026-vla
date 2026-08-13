@@ -562,6 +562,7 @@ AFRAME.registerComponent('controller-updater', {
             const rightGamepad = this.rightHand.components['tracked-controls'].controller?.gamepad;
             if (rightGamepad) {
                 // 摇杆
+                rightController.trigger = rightGamepad.buttons[0]?.value ?? rightController.trigger;
                 rightController.thumbstick = {
                     x: rightGamepad.axes[2] || 0,
                     y: rightGamepad.axes[3] || 0

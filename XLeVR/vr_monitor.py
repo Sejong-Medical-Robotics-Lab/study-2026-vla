@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 # Set the absolute path to the xlevr folder
-XLEVR_PATH = "/home/vec/lerobot/new/XLeVR"
+XLEVR_PATH = "/home/anjungwon/XLeRobot/XLeVR"
 
 def setup_xlevr_environment():
     """Setup xlevr environment"""

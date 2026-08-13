@@ -219,8 +219,8 @@ class VRWebSocketServer(BaseInputProvider):
                 rot = headset_data.get('rotation', {})
                 quat = headset_data.get('quaternion', {})
                 
-                print(f"[VR_WS] Headset - Position: [{pos.get('x', 0):.3f}, {pos.get('y', 0):.3f}, {pos.get('z', 0):.3f}], "
-                      f"Rotation: [{rot.get('x', 0):.1f}, {rot.get('y', 0):.1f}, {rot.get('z', 0):.1f}]")
+                #print(f"[VR_WS] Headset - Position: [{pos.get('x', 0):.3f}, {pos.get('y', 0):.3f}, {pos.get('z', 0):.3f}], "
+                #      f"Rotation: [{rot.get('x', 0):.1f}, {rot.get('y', 0):.1f}, {rot.get('z', 0):.1f}]")
                 
                 # Create headset ControlGoal
                 headset_position = np.array([pos.get('x', 0), pos.get('y', 0), pos.get('z', 0)])
@@ -338,6 +338,8 @@ class VRWebSocketServer(BaseInputProvider):
                 wrist_flex_deg=-controller.x_axis_rotation,
                 metadata={
                     "source": "vr_absolute_position",
+                    "grip_active": grip_active,
+                    "buttons": data.get('buttons', {}),
                     "relative_position": False,  # 标记为绝对位置
                     "vr_position": position_array.tolist(),
                     "scaled_position": absolute_position.tolist(),
