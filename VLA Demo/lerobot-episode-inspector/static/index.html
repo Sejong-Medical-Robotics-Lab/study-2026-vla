@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeRobot Episode Inspector</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --line: #2a313c;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #4c8dff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --fail: #f85149;
+    --state: #4c8dff;
+    --action: #f0883e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    display: grid; grid-template-columns: 300px 1fr; grid-template-rows: auto 1fr;
+    grid-template-areas: "head head" "side main";
+  }
+
+  /* ---- header ---- */
+  header {
+    grid-area: head; display: flex; align-items: center; gap: 18px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header .meta { color: var(--muted); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+  header .meta b { color: var(--text); font-weight: 500; }
+  header .spacer { flex: 1; }
+  .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 11px; font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* ---- sidebar ---- */
+  aside {
+    grid-area: side; background: var(--panel); border-right: 1px solid var(--line);
+    overflow-y: auto; display: flex; flex-direction: column;
+  }
+  .filters { display: flex; gap: 4px; padding: 8px; flex-wrap: wrap;
+             border-bottom: 1px solid var(--line); position: sticky; top: 0;
+             background: var(--panel); z-index: 2; }
+  .filters .btn { padding: 3px 8px; font-size: 11px; }
+  .ep {
+    padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
+    display: grid; grid-template-columns: 8px 1fr auto; gap: 8px; align-items: start;
+  }
+  .ep:hover { background: var(--panel-2); }
+  .ep.sel { background: #1f2937; box-shadow: inset 3px 0 0 var(--accent); }
+  .ep .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
+  .ep .t { font-weight: 600; font-size: 12px; }
+  .ep .s { color: var(--muted); font-size: 11px; overflow: hidden;
+           text-overflow: ellipsis; white-space: nowrap; }
+  .ep .rv { font-size: 15px; line-height: 1; }
+  .lvl-ok { background: var(--ok); } .lvl-warn { background: var(--warn); }
+  .lvl-fail { background: var(--fail); }
+
+  /* ---- main ---- */
+  main { grid-area: main; overflow-y: auto; padding: 14px; display: flex;
+         flex-direction: column; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--muted); margin: 0; padding: 9px 12px;
+             border-bottom: 1px solid var(--line); font-weight: 600; }
+  .card .body { padding: 12px; }
+
+  .instr { display: flex; align-items: baseline; gap: 12px; padding: 12px 14px; }
+  .instr .tag { font-size: 10px; letter-spacing: .1em; color: var(--muted); }
+  .instr .txt { font-size: 17px; font-weight: 500; }
+  .instr .txt.empty { color: var(--fail); font-style: italic; font-weight: 400; }
+
+  .videos { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .vwrap { position: relative; background: #000; border-radius: 6px; overflow: hidden;
+           border: 1px solid var(--line); aspect-ratio: 4/3; }
+  .vwrap video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .vwrap .lbl { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,.65);
+                padding: 2px 7px; border-radius: 4px; font-size: 11px; }
+  .novideo { display: flex; align-items: center; justify-content: center; height: 140px;
+             color: var(--muted); border: 1px dashed var(--line); border-radius: 6px;
+             text-align: center; padding: 16px; }
+
+  .transport { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+  .transport .time { font-variant-numeric: tabular-nums; color: var(--muted);
+                     font-size: 12px; min-width: 190px; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+
+  .chartwrap { position: relative; }
+  .chartwrap canvas { display: block; width: 100%; }
+  .chartwrap #cursor { position: absolute; inset: 0; pointer-events: none; }
+  .legend { display: flex; gap: 16px; padding: 0 12px 10px; color: var(--muted); font-size: 11px; }
+  .legend i { display: inline-block; width: 16px; height: 0; vertical-align: middle;
+              margin-right: 5px; border-top: 2px solid; }
+
+  .chk { display: grid; grid-template-columns: 10px 120px 1fr; gap: 10px;
+         padding: 7px 12px; border-bottom: 1px solid var(--line); align-items: start; }
+  .chk:last-child { border-bottom: 0; }
+  .chk .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; }
+  .chk .lb { font-weight: 500; }
+  .chk .dt { color: var(--muted); }
+
+  .review { display: flex; gap: 8px; align-items: center; padding: 12px; flex-wrap: wrap; }
+  .review input[type=text] { flex: 1; min-width: 200px; background: var(--bg);
+    border: 1px solid var(--line); color: var(--text); border-radius: 6px;
+    padding: 6px 9px; font-family: inherit; font-size: 12px; }
+  .rv-good.active { background: var(--ok); border-color: var(--ok); color: #08130a; }
+  .rv-bad.active { background: var(--fail); border-color: var(--fail); color: #fff; }
+  .rv-unsure.active { background: var(--warn); border-color: var(--warn); color: #1a1200; }
+
+  kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 4px; padding: 0 4px; font-size: 10px; font-family: inherit; }
+  .hint { color: var(--muted); font-size: 11px; padding: 0 12px 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LeRobot Episode Inspector</h1>
+  <div class="meta" id="dsmeta"></div>
+  <div class="spacer"></div>
+  <a class="btn" href="/api/export" download>Export keep/drop</a>
+</header>
+
+<aside>
+  <div class="filters" id="filters"></div>
+  <div id="eplist"></div>
+</aside>
+
+<main id="main">
+  <div class="card"><div class="body" style="color:var(--muted)">에피소드를 선택하세요.</div></div>
+</main>
+
+<script>
+'use strict';
+
+const $ = (s, r = document) => r.querySelector(s);
+const fmt = (t) => {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${m}:${s.toFixed(2).padStart(5, '0')}`;
+};
+
+const S = {
+  ds: null, episodes: [], filter: 'all',
+  ep: null, det: null,
+  t: 0, playing: false, speed: 1, lastTick: 0,
+};
+
+// ---------------------------------------------------------------- boot
+
+async function boot() {
+  S.ds = await (await fetch('/api/dataset')).json();
+  $('#dsmeta').innerHTML = [
+    `<span>root <b>${S.ds.root}</b></span>`,
+    `<span>layout <b>${S.ds.codebase_version}</b></span>`,
+    `<span>robot <b>${S.ds.robot_type}</b></span>`,
+    `<span><b>${S.ds.num_episodes}</b> ep / <b>${S.ds.total_frames}</b> frames @ <b>${S.ds.fps}</b>fps</span>`,
+    `<span>cams <b>${S.ds.video_keys.length ? S.ds.video_keys.map(k => k.split('.').pop()).join(', ') : 'none'}</b></span>`,
+  ].join('');
+
+  S.episodes = await (await fetch('/api/episodes')).json();
+  renderFilters();
+  renderList();
+  if (S.episodes.length) select(S.episodes[0].index);
+  requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------------------------- sidebar
+
+function renderFilters() {
+  const counts = {
+    all: S.episodes.length,
+    flagged: S.episodes.filter(e => e.qc_level !== 'ok').length,
+    unreviewed: S.episodes.filter(e => e.review === 'unreviewed').length,
+    good: S.episodes.filter(e => e.review === 'good').length,
+    bad: S.episodes.filter(e => e.review === 'bad').length,
+  };
+  $('#filters').innerHTML = Object.entries(counts).map(([k, n]) =>
+    `<button class="btn ${S.filter === k ? 'active' : ''}" data-f="${k}">${k} ${n}</button>`).join('');
+  $('#filters').querySelectorAll('button').forEach(b =>
+    b.onclick = () => { S.filter = b.dataset.f; renderFilters(); renderList(); });
+}
+
+function visible() {
+  return S.episodes.filter(e =>
+    S.filter === 'all' ? true :
+    S.filter === 'flagged' ? e.qc_level !== 'ok' : e.review === S.filter);
+}
+
+function renderList() {
+  const mark = { good: '✔', bad: '✘', unsure: '?', unreviewed: '' };
+  $('#eplist').innerHTML = visible().map(e => `
+    <div class="ep ${e.index === S.ep ? 'sel' : ''}" data-i="${e.index}">
+      <div class="dot lvl-${e.qc_level}"></div>
+      <div>
+        <div class="t">Episode ${e.index}</div>
+        <div class="s">${e.duration}s · ${e.length}f · ${escapeHtml(e.instruction) || '<span style="color:var(--fail)">no instruction</span>'}</div>
+      </div>
+      <div class="rv" style="color:${e.review === 'good' ? 'var(--ok)' : e.review === 'bad' ? 'var(--fail)' : 'var(--warn)'}">${mark[e.review]}</div>
+    </div>`).join('') || '<div style="padding:16px;color:var(--muted)">해당 없음</div>';
+  $('#eplist').querySelectorAll('.ep').forEach(d =>
+    d.onclick = () => select(+d.dataset.i));
+}
+
+const escapeHtml = (s) => (s || '').replace(/[&<>"]/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------------------------------------------------------------- episode
+
+async function select(i) {
+  S.ep = i; S.playing = false; S.t = 0;
+  renderList();
+  S.det = await (await fetch(`/api/episodes/${i}`)).json();
+  renderEpisode();
+  drawCharts();
+  seek(0);
+}
+
+function renderEpisode() {
+  const d = S.det;
+  const videos = d.videos.length
+    ? `<div class="videos">${d.videos.map(v => `
+        <div class="vwrap">
+          <video id="v-${cssId(v.key)}" preload="auto" muted playsinline
+                 src="${v.url}" data-t0="${v.t0}"></video>
+          <div class="lbl">${escapeHtml(v.key)}</div>
+        </div>`).join('')}</div>`
+    : `<div class="novideo">이 에피소드에는 카메라 스트림이 없습니다.<br>
+        상태/액션만 녹화되었습니다 &mdash; Pi0 파인튜닝에는 이미지가 필요합니다.</div>`;
+
+  $('#main').innerHTML = `
+    <div class="card">
+      <div class="instr">
+        <span class="tag">INSTRUCTION</span>
+        <span class="txt ${d.instruction ? '' : 'empty'}">${escapeHtml(d.instruction) || '(없음 — meta/tasks 확인 필요)'}</span>
+      </div>
+    </div>
+
+    <div class="card"><div class="body">${videos}</div>
+      <div class="transport">
+        <button class="btn" id="play" style="width:64px">▶ Play</button>
+        <button class="btn" id="speed">1×</button>
+        <input type="range" id="scrub" min="0" max="${Math.max(0, d.length - 1)}" value="0" step="1">
+        <span class="time" id="time"></span>
+      </div>
+      <div class="hint">
+        <kbd>Space</kbd> 재생 · <kbd>←</kbd><kbd>→</kbd> 1프레임 (<kbd>Shift</kbd> 10프레임) ·
+        <kbd>J</kbd><kbd>K</kbd> 이전/다음 에피소드 · <kbd>G</kbd>/<kbd>B</kbd>/<kbd>U</kbd> 판정
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Joint trajectories</h2>
+      <div class="chartwrap">
+        <canvas id="chart"></canvas>
+        <canvas id="cursor"></canvas>
+      </div>
+      <div class="legend">
+        <span><i style="border-color:var(--state)"></i>observation.state</span>
+        <span><i style="border-color:var(--action);border-top-style:dashed"></i>action</span>
+        <span style="margin-left:auto" id="readout"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Quality checks</h2>
+      ${d.qc.checks.map(c => `
+        <div class="chk">
+          <div class="dot lvl-${c.level}"></div>
+          <div class="lb">${escapeHtml(c.label)}</div>
+          <div class="dt">${escapeHtml(c.detail)}</div>
+        </div>`).join('')}
+    </div>
+
+    <div class="card">
+      <h2>Verdict</h2>
+      <div class="review">
+        <button class="btn rv-good ${d.review.status === 'good' ? 'active' : ''}" data-v="good">✔ Good</button>
+        <button class="btn rv-bad ${d.review.status === 'bad' ? 'active' : ''}" data-v="bad">✘ Bad</button>
+        <button class="btn rv-unsure ${d.review.status === 'unsure' ? 'active' : ''}" data-v="unsure">? Unsure</button>
+        <input type="text" id="note" placeholder="메모 (예: 그리퍼 헛잡음, 마지막 3초 정지)" value="${escapeHtml(d.review.note || '')}">
+      </div>
+      <div class="hint">판정은 <code>${escapeHtml(S.ds.review_path)}</code> 에 저장됩니다.</div>
+    </div>`;
+
+  $('#play').onclick = () => setPlaying(!S.playing);
+  $('#speed').onclick = () => {
+    const opts = [0.25, 0.5, 1, 2, 4];
+    S.speed = opts[(opts.indexOf(S.speed) + 1) % opts.length];
+    $('#speed').textContent = S.speed + '×';
+    document.querySelectorAll('video').forEach(v => v.playbackRate = S.speed);
+  };
+  $('#speed').textContent = S.speed + '×';
+  $('#scrub').oninput = (e) => { setPlaying(false); seek(+e.target.value / d.fps); };
+  $('#main').querySelectorAll('[data-v]').forEach(b => b.onclick = () => setReview(b.dataset.v));
+  $('#note').onchange = () => setReview(currentReview());
+
+  const cursor = $('#cursor');
+  const seekFromChart = (e) => {
+    const r = cursor.getBoundingClientRect();
+    const f = Math.round((e.clientX - r.left) / r.width * (d.length - 1));
+    setPlaying(false);
+    seek(Math.max(0, Math.min(d.length - 1, f)) / d.fps);
+  };
+  cursor.style.pointerEvents = 'auto';
+  cursor.onmousedown = (e) => {
+    seekFromChart(e);
+    const mv = (ev) => seekFromChart(ev);
+    const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  };
+
+  document.querySelectorAll('video').forEach(v => { v.playbackRate = S.speed; });
+  window.onresize = drawCharts;
+}
+
+const cssId = (k) => k.replace(/[^a-zA-Z0-9]/g, '_');
+const currentReview = () => {
+  const a = $('#main .rv-good.active') ? 'good' :
+            $('#main .rv-bad.active') ? 'bad' :
+            $('#main .rv-unsure.active') ? 'unsure' : 'unreviewed';
+  return a;
+};
+
+async function setReview(status) {
+  const note = $('#note') ? $('#note').value : '';
+  await fetch(`/api/review/${S.ep}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, note }),
+  });
+  S.det.review = { status, note };
+  const e = S.episodes.find(x => x.index === S.ep);
+  if (e) e.review = status;
+  ['good', 'bad', 'unsure'].forEach(v =>
+    $('#main .rv-' + v).classList.toggle('active', v === status));
+  renderFilters(); renderList();
+}
+
+// ---------------------------------------------------------------- playback
+
+function setPlaying(on) {
+  S.playing = on;
+  if ($('#play')) $('#play').textContent = on ? '❚❚ Pause' : '▶ Play';
+  S.lastTick = performance.now();
+  document.querySelectorAll('video').forEach(v => {
+    if (on) v.play().catch(() => {}); else v.pause();
+  });
+}
+
+function seek(t) {
+  const d = S.det;
+  const dur = d.length / d.fps;
+  S.t = Math.max(0, Math.min(dur - 1e-3, t));
+  d.videos.forEach(v => {
+    const el = $('#v-' + cssId(v.key));
+    if (el) el.currentTime = v.t0 + S.t;
+  });
+  paint();
+}
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (!S.det) return;
+  if (S.playing) {
+    const dt = Math.min(0.25, (now - S.lastTick) / 1000);
+    S.lastTick = now;
+    S.t += dt * S.speed;
+    const dur = S.det.length / S.det.fps;
+    if (S.t >= dur) { S.t = dur - 1e-3; setPlaying(false); }
+    // Nudge each <video> back onto the master clock if it drifts.
+    S.det.videos.forEach(v => {
+      const el = $('#v-' + cssId(v.key));
+      if (el && el.readyState >= 2 && Math.abs(el.currentTime - (v.t0 + S.t)) > 0.12) {
+        el.currentTime = v.t0 + S.t;
+      }
+    });
+    paint();
+  }
+}
+
+function paint() {
+  const d = S.det, f = Math.min(d.length - 1, Math.round(S.t * d.fps));
+  const sc = $('#scrub'); if (sc) sc.value = f;
+  const tm = $('#time');
+  if (tm) tm.textContent = `${fmt(S.t)} / ${fmt(d.length / d.fps)}   ·   frame ${f} / ${d.length - 1}`;
+  const ro = $('#readout');
+  if (ro && d.state) {
+    ro.textContent = 'state @ cursor: ' + d.state.map(s => s[f].toFixed(2)).join('  ');
+  }
+  drawCursor(f);
+}
+
+// ---------------------------------------------------------------- charts
+
+const ROW_H = 58, PAD_L = 68, PAD_R = 10, PAD_T = 6, PAD_B = 18;
+
+function chartGeom() {
+  const d = S.det, n = d.state ? d.state.length : 0;
+  const cv = $('#chart');
+  const w = cv.clientWidth;
+  const h = n * ROW_H + PAD_T + PAD_B;
+  return { n, w, h, plotW: w - PAD_L - PAD_R };
+}
+
+function setupCanvas(cv, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = w * dpr; cv.height = h * dpr;
+  cv.style.height = h + 'px';
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return ctx;
+}
+
+function drawCharts() {
+  if (!S.det || !$('#chart')) return;
+  const d = S.det;
+  if (!d.state && !d.action) return;
+  const g = chartGeom();
+  const ctx = setupCanvas($('#chart'), g.w, g.h);
+  setupCanvas($('#cursor'), g.w, g.h);
+
+  const T = d.length;
+  const css = getComputedStyle(document.documentElement);
+  const colState = css.getPropertyValue('--state').trim();
+  const colAction = css.getPropertyValue('--action').trim();
+  const colLine = css.getPropertyValue('--line').trim();
+  const colMuted = css.getPropertyValue('--muted').trim();
+
+  ctx.font = '10px ui-monospace, monospace';
+
+  for (let j = 0; j < g.n; j++) {
+    const top = PAD_T + j * ROW_H, bot = top + ROW_H - 12;
+    const s = d.state ? d.state[j] : null;
+    const a = d.action && d.action[j] ? d.action[j] : null;
+
+    let lo = Infinity, hi = -Infinity;
+    for (const arr of [s, a]) {
+      if (!arr) continue;
+      for (const v of arr) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    }
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    if (hi - lo < 1e-6) { hi += 0.5; lo -= 0.5; }
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+
+    const X = (i) => PAD_L + (i / Math.max(1, T - 1)) * g.plotW;
+    const Y = (v) => bot - ((v - lo) / (hi - lo)) * (bot - top);
+
+    // row frame
+    ctx.strokeStyle = colLine; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD_L, bot + .5); ctx.lineTo(PAD_L + g.plotW, bot + .5); ctx.stroke();
+
+    // labels
+    ctx.fillStyle = colMuted; ctx.textAlign = 'right';
+    ctx.fillText(d.joint_names[j] || ('dim ' + j), PAD_L - 8, top + 11);
+    ctx.fillText(hi.toFixed(1), PAD_L - 8, top + 24);
+    ctx.fillText(lo.toFixed(1), PAD_L - 8, bot);
+
+    const stroke = (arr, color, dash) => {
+      if (!arr) return;
+      ctx.save(); ctx.beginPath(); ctx.setLineDash(dash);
+      ctx.strokeStyle = color; ctx.lineWidth = 1.4;
+      // Sub-pixel decimation: at most 2 points per horizontal pixel.
+      const step = Math.max(1, Math.floor(T / (g.plotW * 2)));
+      for (let i = 0; i < T; i += step) {
+        const x = X(i), y = Y(arr[i]);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.lineTo(X(T - 1), Y(arr[T - 1]));
+      ctx.stroke(); ctx.restore();
+    };
+    stroke(a, colAction, [3, 3]);
+    stroke(s, colState, []);
+  }
+
+  // time axis
+  ctx.fillStyle = colMuted; ctx.textAlign = 'center';
+  const dur = d.length / d.fps;
+  const ticks = 8;
+  for (let i = 0; i <= ticks; i++) {
+    const t = dur * i / ticks;
+    ctx.fillText(t.toFixed(1) + 's', PAD_L + g.plotW * i / ticks, g.h - 5);
+  }
+}
+
+function drawCursor(f) {
+  const cv = $('#cursor');
+  if (!cv || !S.det || !S.det.state) return;
+  const g = chartGeom();
+  const dpr = window.devicePixelRatio || 1;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, g.w, g.h);
+  const x = PAD_L + (f / Math.max(1, S.det.length - 1)) * g.plotW;
+  ctx.strokeStyle = '#ffffff88'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x + .5, PAD_T); ctx.lineTo(x + .5, g.h - PAD_B); ctx.stroke();
+}
+
+// ---------------------------------------------------------------- keys
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  const d = S.det; if (!d) return;
+  const step = (n) => { setPlaying(false); seek(S.t + n / d.fps); };
+  const jump = (dir) => {
+    const list = visible();
+    const at = list.findIndex(x => x.index === S.ep);
+    const nxt = list[Math.max(0, Math.min(list.length - 1, at + dir))];
+    if (nxt) select(nxt.index);
+  };
+  switch (e.key.toLowerCase()) {
+    case ' ': e.preventDefault(); setPlaying(!S.playing); break;
+    case 'arrowright': e.preventDefault(); step(e.shiftKey ? 10 : 1); break;
+    case 'arrowleft': e.preventDefault(); step(e.shiftKey ? -10 : -1); break;
+    case 'k': jump(1); break;
+    case 'j': jump(-1); break;
+    case 'g': setReview('good'); break;
+    case 'b': setReview('bad'); break;
+    case 'u': setReview('unsure'); break;
+  }
+});
+
+boot();
+</script>
+</body>
+</html>

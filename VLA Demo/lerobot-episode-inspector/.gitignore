@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Review verdicts live next to the dataset, not in the repo.
+episode_review.json
+*.json.tmp
+
+# Datasets and recordings never belong in git.
+*.parquet
+*.mp4
+data/
+videos/
+meta/
