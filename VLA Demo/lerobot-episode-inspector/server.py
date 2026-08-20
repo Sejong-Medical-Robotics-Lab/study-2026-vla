@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import threading
 from dataclasses import dataclass, field
@@ -148,6 +149,7 @@ class Dataset:
             else self.root / "episode_review.json"
         )
         self.reviews: Dict[str, dict] = _read_json(self.review_path) or {}
+        self._review_lock = threading.Lock()
 
         self._qc_cache: Dict[int, dict] = {}
         self._median_length = float(
@@ -412,11 +414,23 @@ class Dataset:
 
     def set_review(self, ep: int, status: str, note: str) -> dict:
         entry = {"status": status, "note": note}
-        self.reviews[str(ep)] = entry
-        tmp = self.review_path.with_suffix(".json.tmp")
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(self.reviews, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.review_path)
+        # Several people can review at once from different machines, and uvicorn
+        # runs sync endpoints on a threadpool -- serialise the whole
+        # read-modify-write so two verdicts cannot interleave into one file.
+        with self._review_lock:
+            self.reviews[str(ep)] = entry
+            payload = json.dumps(self.reviews, indent=2, ensure_ascii=False)
+            self.review_path.parent.mkdir(parents=True, exist_ok=True)
+            # A unique temp name per write, so a concurrent writer that slipped
+            # past cannot half-fill the file this one is about to rename.
+            tmp = self.review_path.with_name(
+                f"{self.review_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            try:
+                tmp.write_text(payload, encoding="utf-8")
+                tmp.replace(self.review_path)  # atomic on POSIX and Windows
+            except Exception:
+                tmp.unlink(missing_ok=True)
+                raise
         return entry
 
 
