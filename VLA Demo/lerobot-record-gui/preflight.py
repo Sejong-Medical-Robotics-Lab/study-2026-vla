@@ -269,9 +269,20 @@ def dataset_status(root: str | None, resume: bool) -> dict:
         return _check("dataset", "데이터셋 경로", "ok",
                       f"이어서 수집합니다 — 기존 {episodes} 에피소드에 추가됩니다",
                       path=str(path), existing=episodes)
-    return _check("dataset", "데이터셋 경로", "fail",
-                  f"이미 존재합니다 (에피소드 {episodes}개). "
-                  f"이어서 찍으려면 resume 를 켜고, 새로 찍으려면 다른 이름을 쓰세요",
+
+    # A failed or cancelled start still creates the root, so an empty directory
+    # is almost always leftovers rather than data worth protecting.
+    if episodes == 0:
+        return _check("dataset", "데이터셋 경로", "warn",
+                      f"폴더가 이미 있지만 에피소드가 없습니다 — 이전 시도의 잔여물로 보입니다: {path}",
+                      path=str(path), existing=0)
+
+    # Not a hard failure: LeRobot decides what to do with an existing root, and
+    # it refuses or resumes on its own. Blocking here on a guess only produced a
+    # dialog people learned to click through.
+    return _check("dataset", "데이터셋 경로", "warn",
+                  f"이미 에피소드 {episodes}개가 있습니다. 이어서 찍으려면 resume 를 켜고, "
+                  f"별도로 모으려면 다른 이름을 쓰세요",
                   path=str(path), existing=episodes)
 
 

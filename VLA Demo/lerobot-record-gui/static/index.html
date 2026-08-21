@@ -149,6 +149,8 @@ legend{font-size:12px;font-weight:700;color:var(--dim);padding:0 6px}
   <h1>LeRobot Record</h1>
   <span class="badge demo" id="demoBadge" hidden>DEMO &mdash; 하드웨어 없음</span>
   <span class="spacer"></span>
+  <a id="inspectorLink" class="badge" style="text-decoration:none" target="_blank"
+     title="수집한 에피소드를 검수합니다 (별도 서버)">검수 도구 &rarr;</a>
   <span class="muted"><span class="dot" id="link"></span> <span id="linkText">연결 중…</span></span>
   <button id="fsBtn" title="상태 보드만 크게 봅니다">전체화면</button>
 </header>
@@ -684,7 +686,11 @@ function connect() {
       const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
       el.textContent += p.log.join("\n") + "\n";
       if (atBottom) el.scrollTop = el.scrollHeight;
-      if (p.log.some((l) => /Traceback|Error|error|실패/.test(l))) $("logPanel").open = true;
+      // Only pop the log open for something that actually stopped the run.
+      // LeRobot prints benign errors while the arms come up, and matching a
+      // bare "error" meant the panel flew open on every single start.
+      if (p.log.some((l) => /Traceback \(most recent|\[worker\] finished: error|워커 종료 \(exit [1-9]/.test(l)))
+        $("logPanel").open = true;
     }
     render(p);
   };
@@ -699,17 +705,14 @@ function connect() {
 async function start() {
   primeAudio();
   const form = readForm();
-  let pf = null;
-  try { pf = await postJSON("/api/preflight", form); } catch (_) {}
-  if (pf) {
+  // Refresh the checks but never gate on them. A dialog that appears before
+  // every run gets clicked through on reflex, so it stops being a safeguard and
+  // is only in the way; the red rows stay on screen, and a real problem shows
+  // up in seconds as a failed worker with the actual error.
+  postJSON("/api/preflight", form).then((pf) => {
     renderChecks(pf);
-    if (pf.level === "fail") {
-      const bad = pf.checks.filter((c) => c.level === "fail")
-                           .map((c) => `• ${c.label}: ${c.detail}`).join("\n");
-      $("preflightPanel").open = true;
-      if (!confirm(`준비 확인에서 문제가 있습니다:\n\n${bad}\n\n그래도 시작할까요?`)) return;
-    }
-  }
+    if (pf.level === "fail") $("preflightPanel").open = true;
+  }).catch(() => {});
   try {
     await postJSON("/api/start", form);
   } catch (e) {
@@ -797,6 +800,10 @@ document.addEventListener("keydown", (e) => {
 (async function init() {
   CFG = await api("/api/config");
   if (CFG.demo) $("demoBadge").hidden = false;
+  // The inspector is a separate server on its own port, conventionally 8000 on
+  // the same machine. Assume that unless --inspector-url says otherwise.
+  $("inspectorLink").href = CFG.inspector_url ||
+    `${location.protocol}//${location.hostname}:8000/`;
   fillForm(CFG.defaults);
   await loadPresets();
   connect();
