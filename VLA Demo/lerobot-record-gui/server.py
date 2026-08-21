@@ -83,7 +83,11 @@ DATASET_FIELDS = {
     "num_image_writer_threads_per_camera": int,
     "video_encoding_batch_size": int,
 }
-DEVICE_FIELDS = {"type": str, "port": str, "id": str}
+# discover_packages_path is LeRobot's own plugin hook: it imports that package
+# before parsing, which is how a third-party robot type like piper_follower gets
+# registered. Leaving it out of the whitelist silently dropped the one flag that
+# makes a custom robot resolvable.
+DEVICE_FIELDS = {"type": str, "port": str, "id": str, "discover_packages_path": str}
 CAMERA_FIELDS = {"type": str, "index_or_path": str, "width": int, "height": int, "fps": int}
 TOP_FIELDS = {"resume": bool, "play_sounds": bool, "display_data": bool}
 
@@ -345,7 +349,8 @@ class RunState:
 
 
 def spawn(script: Path, gui_url: str, token: str, form: dict, argv: list[str],
-          python: str, speed: float = 1.0) -> subprocess.Popen:
+          python: str, speed: float = 1.0, workdir: str | None = None,
+          plugin_paths: list[str] | None = None) -> subprocess.Popen:
     dataset = form.get("dataset") or {}
     cmd = [
         python, "-u", str(script),
@@ -360,6 +365,8 @@ def spawn(script: Path, gui_url: str, token: str, form: dict, argv: list[str],
         cmd.append("--play-sounds")
     if speed and speed != 1.0:
         cmd += ["--speed", str(speed)]
+    for path in plugin_paths or []:
+        cmd += ["--plugin-path", path]
     cmd += ["--", *argv]
 
     kwargs: dict = {}
@@ -370,8 +377,13 @@ def spawn(script: Path, gui_url: str, token: str, form: dict, argv: list[str],
     else:
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
 
+    # Run where the operator normally runs lerobot-record. LeRobot's plugin scan
+    # walks sys.path, which includes the working directory -- so a custom robot
+    # type can resolve from one directory and not another.
+    cwd = str(Path(workdir).expanduser()) if workdir else str(HERE)
+
     return subprocess.Popen(
-        cmd, cwd=str(HERE), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, **kwargs,
     )
 
@@ -442,7 +454,8 @@ def build_app(state: RunState, opts: argparse.Namespace) -> FastAPI:
         token = secrets.token_urlsafe(16)
         try:
             speed = opts.demo_speed if opts.demo else 1.0
-            proc = spawn(worker, gui_url, token, form, argv, opts.python, speed)
+            proc = spawn(worker, gui_url, token, form, argv, opts.python, speed,
+                         opts.workdir, opts.plugin_path)
         except OSError as exc:
             raise HTTPException(500, f"워커를 실행하지 못했습니다: {exc}") from None
 
@@ -649,6 +662,13 @@ def main() -> None:
                     help="fast-forward the simulated run (demo mode only)")
     ap.add_argument("--python", default=sys.executable,
                     help="interpreter for the worker (must have lerobot installed)")
+    ap.add_argument("--workdir", default=None, metavar="DIR",
+                    help="run the worker from DIR -- use the directory you normally "
+                         "run lerobot-record from, since LeRobot's third-party device "
+                         "scan reads sys.path and that includes the working directory")
+    ap.add_argument("--plugin-path", action="append", default=[], metavar="DIR",
+                    help="prepend DIR to the worker's sys.path so an uninstalled "
+                         "lerobot_robot_* package becomes importable; repeatable")
     ap.add_argument("--dataset-dir", default="~/lerobot_datasets")
     ap.add_argument("--set-roles",
                     default="~/lerobot_teleop/piper_robot_source/set_roles.py")

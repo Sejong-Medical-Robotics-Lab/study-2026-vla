@@ -229,6 +229,16 @@ legend{font-size:12px;font-weight:700;color:var(--dim);padding:0 6px}
           <label class="f"><span>teleop.port</span><input id="teleop_port"></label>
           <label class="f"><span>teleop.id</span><input id="teleop_id"></label>
         </div>
+        <div class="fields" style="margin-top:11px">
+          <label class="f"><span>robot.discover_packages_path</span>
+            <input id="robot_discover_packages_path" placeholder="비워두면 사용 안 함"></label>
+          <label class="f"><span>teleop.discover_packages_path</span>
+            <input id="teleop_discover_packages_path" placeholder="비워두면 사용 안 함"></label>
+        </div>
+        <div class="muted" style="margin-top:6px">
+          LeRobot 기본 목록에 없는 로봇(<code>piper_follower</code> 등)을 쓸 때, 그 타입을
+          등록하는 패키지 이름을 적으면 파싱 전에 import 합니다.
+        </div>
       </fieldset>
 
       <fieldset>
@@ -336,6 +346,8 @@ function fillForm(f) {
   $("teleop_type").value = f.teleop?.type || "";
   $("teleop_port").value = f.teleop?.port || "";
   $("teleop_id").value = f.teleop?.id || "";
+  $("robot_discover_packages_path").value = f.robot?.discover_packages_path || "";
+  $("teleop_discover_packages_path").value = f.teleop?.discover_packages_path || "";
   const d = f.dataset || {};
   $("ds_repo_id").value = d.repo_id || "";
   $("ds_root").value = d.root || "";
@@ -362,9 +374,11 @@ function readForm() {
   })).filter((c) => c.name);
   return {
     robot: {type: $("robot_type").value.trim(), port: $("robot_port").value.trim(),
-            id: $("robot_id").value.trim()},
+            id: $("robot_id").value.trim(),
+            discover_packages_path: $("robot_discover_packages_path").value.trim()},
     teleop: {type: $("teleop_type").value.trim(), port: $("teleop_port").value.trim(),
-             id: $("teleop_id").value.trim()},
+             id: $("teleop_id").value.trim(),
+             discover_packages_path: $("teleop_discover_packages_path").value.trim()},
     cameras: cams,
     dataset: {
       repo_id: $("ds_repo_id").value.trim(),

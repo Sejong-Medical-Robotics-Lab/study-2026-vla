@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pkgutil
 import signal
 import sys
 import threading
@@ -53,6 +54,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Callable
 
 # --------------------------------------------------------------------------
@@ -492,6 +494,44 @@ class NullListener:
         pass
 
 
+def add_plugin_paths(paths: list[str]) -> None:
+    """Make uninstalled third-party device packages importable.
+
+    LeRobot 0.6+ registers third-party hardware by scanning sys.path for
+    top-level packages named lerobot_robot_* / lerobot_teleoperator_* /
+    lerobot_camera_*. That scan only sees what is on sys.path, so a package
+    sitting in a working directory is invisible unless we put it there --
+    which is why a custom robot type can resolve from one directory and not
+    another.
+    """
+    for raw in paths:
+        path = str(Path(raw).expanduser().resolve())
+        if path not in sys.path:
+            sys.path.insert(0, path)
+            print(f"[worker] sys.path += {path}", flush=True)
+
+
+def describe_plugins() -> list[str]:
+    """Which third-party device packages are visible from here."""
+    prefixes = ("lerobot_robot_", "lerobot_teleoperator_", "lerobot_camera_")
+    found = []
+    for module in pkgutil.iter_modules():
+        if module.name.startswith(prefixes):
+            found.append(module.name)
+    return sorted(set(found))
+
+
+def _known_choices(module_path: str) -> str:
+    """The type names LeRobot will accept, straight from its own registry."""
+    config_name = "RobotConfig" if "robots" in module_path else "TeleoperatorConfig"
+    try:
+        module = __import__(module_path, fromlist=[config_name])
+        names = sorted(getattr(module, config_name).get_known_choices())
+    except Exception as exc:
+        return f"(could not list: {type(exc).__name__}: {exc})"
+    return ", ".join(names) or "(none)"
+
+
 def resolve_record_module():
     """Find LeRobot's record module across the layouts we might meet.
 
@@ -627,6 +667,11 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     ap.add_argument("--reset-time-s", type=float, default=None)
     ap.add_argument("--num-episodes", type=int, default=None)
     ap.add_argument("--play-sounds", action="store_true", help="let LeRobot speak as well")
+    ap.add_argument("--plugin-path", action="append", default=[], metavar="DIR",
+                    help="prepend DIR to sys.path before importing lerobot; repeatable. "
+                         "Use when a third-party robot package (lerobot_robot_*) lives in "
+                         "a directory that is not installed, so LeRobot's plugin scan "
+                         "cannot see it from here")
     ap.add_argument("--dry-run", action="store_true",
                     help="resolve the module and validate the flags, then exit")
     known, rest = ap.parse_known_args(argv)
@@ -644,6 +689,14 @@ def dry_run(module, lerobot_argv: list[str]) -> int:
         print(f"lerobot version : {getattr(lerobot, '__version__', 'unknown')}")
     except Exception as exc:
         print(f"lerobot version : unavailable ({exc})")
+
+    # The single most useful line when a custom robot will not resolve: whether
+    # the type is registered at all, from *this* interpreter and directory.
+    plugins = describe_plugins()
+    print(f"3rd-party pkgs  : {', '.join(plugins) if plugins else '(none visible)'}")
+    for label, path in (("robot", "lerobot.robots"), ("teleop", "lerobot.teleoperators")):
+        print(f"{label + ' types':<16}: {_known_choices(path)}")
+
     print(f"flags           : {' '.join(lerobot_argv)}")
 
     config_class = getattr(module, "RecordConfig", None)
@@ -673,6 +726,9 @@ def dry_run(module, lerobot_argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     cfg, lerobot_argv = parse_args(argv if argv is not None else sys.argv[1:])
+
+    # Before anything imports lerobot: its third-party scan reads sys.path once.
+    add_plugin_paths(cfg.plugin_path)
 
     try:
         module = resolve_record_module()
