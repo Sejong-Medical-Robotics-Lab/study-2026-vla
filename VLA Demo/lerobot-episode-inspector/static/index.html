@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LeRobot Episode Inspector</title>
+<!-- Inline, so the page makes no outbound request: the robot PC has no internet. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M6 7h20v18H6z' fill='none' stroke='%231f6feb' stroke-width='3'/%3E%3Cpath d='M13 12l8 4-8 4z' fill='%231f6feb'/%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #ffffff;
@@ -59,6 +61,23 @@
              border-bottom: 1px solid var(--line); position: sticky; top: 0;
              background: var(--panel); z-index: 2; }
   .filters .btn { padding: 3px 8px; font-size: 11px; }
+
+  /* ---- dataset toggles ---- */
+  .dsgroup { border-bottom: 1px solid var(--line); }
+  .dsgroup > summary {
+    cursor: pointer; padding: 10px 12px; list-style: none; display: grid;
+    grid-template-columns: 10px 1fr auto; gap: 8px; align-items: baseline;
+    font-size: 13px; font-weight: 600;
+  }
+  .dsgroup > summary::-webkit-details-marker { display: none; }
+  .dsgroup > summary:hover { background: #f0f2f5; }
+  .dsgroup > summary::before { content: "\25B8"; color: var(--muted); font-size: 10px; }
+  .dsgroup[open] > summary::before { content: "\25BE"; }
+  .dsgroup[open] > summary { background: #eaeef3; }
+  .dsname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dscount { font-size: 11px; font-weight: 400; color: var(--muted);
+             font-variant-numeric: tabular-nums; }
+  .dsloading { padding: 12px; color: var(--muted); font-size: 12px; }
   .ep {
     padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
     display: grid; grid-template-columns: 8px 1fr auto; gap: 8px; align-items: start;
@@ -157,13 +176,10 @@
   <h1>LeRobot Episode Inspector</h1>
   <div class="meta" id="dsmeta"></div>
   <div class="spacer"></div>
-  <a class="btn" href="/api/export" download>Export keep/drop</a>
+  <a class="btn" id="exportBtn" href="#" download>Export keep/drop</a>
 </header>
 
-<aside>
-  <div class="filters" id="filters"></div>
-  <div id="eplist"></div>
-</aside>
+<aside id="side"></aside>
 
 <main id="main">
   <div class="card"><div class="body" style="color:var(--muted)">에피소드를 선택하세요.</div></div>
@@ -179,28 +195,80 @@ const fmt = (t) => {
 };
 
 const S = {
+  lib: null, name: null,          // the dataset currently expanded
   ds: null, episodes: [], filter: 'all',
   ep: null, det: null,
   t: 0, playing: false, speed: 1, lastTick: 0,
 };
 
+const api = (path) => `/api/datasets/${encodeURIComponent(S.name)}${path}`;
+
 // ---------------------------------------------------------------- boot
 
 async function boot() {
-  S.ds = await (await fetch('/api/dataset')).json();
+  S.lib = await (await fetch('/api/datasets')).json();
+  renderDatasets();
+  // One dataset is not a choice worth making anyone click through; several are.
+  if (S.lib.datasets.length === 1) {
+    $('#side').querySelector('.dsgroup').open = true;
+    await openDataset(S.lib.datasets[0].name);
+  } else {
+    $('#dsmeta').innerHTML =
+      `<span>root <b>${S.lib.root}</b></span>` +
+      `<span>데이터셋 <b>${S.lib.datasets.length}</b>개 — 왼쪽에서 펼치세요</span>`;
+  }
+  requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------------------------- datasets
+
+function renderDatasets() {
+  const side = $('#side');
+  side.innerHTML = '';
+  for (const d of S.lib.datasets) {
+    const g = document.createElement('details');
+    g.className = 'dsgroup';
+    g.dataset.name = d.name;
+    const eps = d.episodes == null ? '?' : d.episodes;
+    const reviewed = d.reviewed ? ` · ${d.reviewed} 검수` : '';
+    g.innerHTML =
+      `<summary><span class="dsname" title="${escapeHtml(d.path)}">${escapeHtml(d.name)}</span>` +
+      `<span class="dscount">${eps} ep${reviewed}</span></summary>` +
+      `<div class="dsbody"><div class="dsloading">읽는 중…</div></div>`;
+    g.addEventListener('toggle', () => {
+      if (!g.open) return;
+      // Accordion: two open lists in one narrow column is just scrolling.
+      side.querySelectorAll('.dsgroup[open]').forEach(o => { if (o !== g) o.open = false; });
+      if (g.dataset.name !== S.name) openDataset(g.dataset.name);
+    });
+    side.append(g);
+  }
+}
+
+async function openDataset(name) {
+  S.name = name;
+  S.ep = null; S.det = null; S.episodes = []; S.filter = 'all'; S.playing = false;
+  $('#main').innerHTML =
+    '<div class="card"><div class="body" style="color:var(--muted)">읽는 중…</div></div>';
+
+  S.ds = await (await fetch(api(''))).json();
   $('#dsmeta').innerHTML = [
-    `<span>root <b>${S.ds.root}</b></span>`,
+    `<span>dataset <b>${escapeHtml(name)}</b></span>`,
     `<span>layout <b>${S.ds.codebase_version}</b></span>`,
     `<span>robot <b>${S.ds.robot_type}</b></span>`,
     `<span><b>${S.ds.num_episodes}</b> ep / <b>${S.ds.total_frames}</b> frames @ <b>${S.ds.fps}</b>fps</span>`,
     `<span>cams <b>${S.ds.video_keys.length ? S.ds.video_keys.map(k => k.split('.').pop()).join(', ') : 'none'}</b></span>`,
   ].join('');
+  $('#exportBtn').href = api('/export');
 
-  S.episodes = await (await fetch('/api/episodes')).json();
+  S.episodes = await (await fetch(api('/episodes'))).json();
+  const body = $('#side').querySelector(`.dsgroup[data-name="${CSS.escape(name)}"] .dsbody`);
+  body.innerHTML = '<div class="filters" id="filters"></div><div id="eplist"></div>';
   renderFilters();
   renderList();
   if (S.episodes.length) select(S.episodes[0].index);
-  requestAnimationFrame(tick);
+  else $('#main').innerHTML =
+    '<div class="card"><div class="body" style="color:var(--muted)">에피소드가 없습니다.</div></div>';
 }
 
 // ---------------------------------------------------------------- sidebar
@@ -248,7 +316,7 @@ const escapeHtml = (s) => (s || '').replace(/[&<>"]/g, c =>
 async function select(i) {
   S.ep = i; S.playing = false; S.t = 0;
   renderList();
-  S.det = await (await fetch(`/api/episodes/${i}`)).json();
+  S.det = await (await fetch(api(`/episodes/${i}`))).json();
   renderEpisode();
   drawCharts();
   seek(0);
@@ -388,7 +456,7 @@ const currentReview = () => {
 
 async function setReview(status) {
   const note = $('#note') ? $('#note').value : '';
-  await fetch(`/api/review/${S.ep}`, {
+  await fetch(api(`/review/${S.ep}`), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status, note }),
   });

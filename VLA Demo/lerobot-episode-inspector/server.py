@@ -750,7 +750,98 @@ def range_response(path: Path, range_header: Optional[str]) -> Response:
     )
 
 
-def build_app(ds: Dataset) -> FastAPI:
+class Library:
+    """One or many datasets under a directory.
+
+    Pointing --data at ~/lerobot_datasets should show everything collected so
+    far, not force a server restart per task. Datasets are constructed lazily:
+    loading one reads its parquet files and runs QC over every episode, so
+    doing that for a dozen folders at startup would make the page slow to open
+    for the sake of data nobody asked to see yet.
+    """
+
+    def __init__(self, target: Path, review_path: Optional[Path] = None):
+        target = target.expanduser().resolve()
+        if not target.exists():
+            raise FileNotFoundError(f"not found: {target}")
+
+        self.root = target
+        self.review_path = review_path
+        self._cache: Dict[str, Dataset] = {}
+        self._lock = threading.Lock()
+
+        if target.is_file() or self.looks_like_dataset(target):
+            self.paths = {target.stem if target.is_file() else target.name: target}
+            self.multi = False
+        else:
+            found = {
+                child.name: child
+                for child in sorted(target.iterdir())
+                if child.is_dir() and self.looks_like_dataset(child)
+            }
+            if not found:
+                raise FileNotFoundError(
+                    f"{target} 아래에서 데이터셋을 찾지 못했습니다. "
+                    f"데이터셋 폴더나 그 폴더들을 담은 상위 폴더를 지정하세요."
+                )
+            self.paths = found
+            self.multi = True
+
+    @staticmethod
+    def looks_like_dataset(path: Path) -> bool:
+        if (path / "meta" / "info.json").exists():
+            return True
+        data = path / "data"
+        if data.is_dir() and next(data.rglob("*.parquet"), None) is not None:
+            return True
+        # A bare directory of parquet files is a dataset too; meta/ is optional.
+        return next((p for p in path.glob("*.parquet")), None) is not None
+
+    @property
+    def names(self) -> List[str]:
+        return list(self.paths)
+
+    def summary(self, name: str) -> dict:
+        """Cheap enough to call for every dataset on page load.
+
+        Reads meta/info.json only. A dataset already loaded reports its real
+        numbers instead, since those are authoritative when meta is stale.
+        """
+        path = self.paths[name]
+        loaded = self._cache.get(name)
+        if loaded is not None:
+            return {
+                "name": name, "path": str(path), "loaded": True,
+                "episodes": len(loaded.episodes),
+                "frames": int(sum(e.length for e in loaded.episodes.values())),
+                "fps": loaded.fps, "robot_type": loaded.robot_type,
+                "reviewed": sum(1 for v in loaded.reviews.values()
+                                if v.get("status") not in (None, "unreviewed")),
+            }
+        info = _read_json(path / "meta" / "info.json") or {}
+        reviews = _read_json(path / "episode_review.json") or {}
+        return {
+            "name": name, "path": str(path), "loaded": False,
+            "episodes": info.get("total_episodes"),
+            "frames": info.get("total_frames"),
+            "fps": info.get("fps"),
+            "robot_type": info.get("robot_type"),
+            "reviewed": sum(1 for v in reviews.values()
+                            if isinstance(v, dict) and v.get("status") not in (None, "unreviewed")),
+        }
+
+    def get(self, name: str) -> Dataset:
+        if name not in self.paths:
+            raise HTTPException(404, f"no dataset named {name!r}")
+        with self._lock:
+            ds = self._cache.get(name)
+            if ds is None:
+                ds = Dataset(self.paths[name], self.review_path)
+                self._cache[name] = ds
+            return ds
+
+
+def build_app(library: Library) -> FastAPI:
     app = FastAPI(title="LeRobot Episode Inspector")
     static_dir = Path(__file__).parent / "static"
 
@@ -758,9 +849,19 @@ def build_app(ds: Dataset) -> FastAPI:
     def index():
         return FileResponse(static_dir / "index.html")
 
-    @app.get("/api/dataset")
-    def dataset_info():
+    @app.get("/api/datasets")
+    def datasets():
         return {
+            "root": str(library.root),
+            "multi": library.multi,
+            "datasets": [library.summary(n) for n in library.names],
+        }
+
+    @app.get("/api/datasets/{name}")
+    def dataset_info(name: str):
+        ds = library.get(name)
+        return {
+            "name": name,
             "root": str(ds.root),
             "target": str(ds.target),
             "codebase_version": ds.codebase_version,
@@ -775,8 +876,9 @@ def build_app(ds: Dataset) -> FastAPI:
             "data_files": [str(p) for p in ds.data_files],
         }
 
-    @app.get("/api/episodes")
-    def episodes():
+    @app.get("/api/datasets/{name}/episodes")
+    def episodes(name: str):
+        ds = library.get(name)
         out = []
         for ep, episode in ds.episodes.items():
             if ep not in ds._qc_cache:
@@ -794,8 +896,9 @@ def build_app(ds: Dataset) -> FastAPI:
             })
         return out
 
-    @app.get("/api/episodes/{ep}")
-    def episode_detail(ep: int):
+    @app.get("/api/datasets/{name}/episodes/{ep}")
+    def episode_detail(name: str, ep: int):
+        ds = library.get(name)
         if ep not in ds.episodes:
             raise HTTPException(404, f"no episode {ep}")
         episode = ds.episodes[ep]
@@ -834,7 +937,7 @@ def build_app(ds: Dataset) -> FastAPI:
             "videos": [
                 {
                     "key": k,
-                    "url": f"/api/video/{ep}/{k}",
+                    "url": f"/api/datasets/{name}/video/{ep}/{k}",
                     "t0": v.t0,
                     "t1": v.t1,
                     "file": str(v.path),
@@ -845,15 +948,17 @@ def build_app(ds: Dataset) -> FastAPI:
             "review": ds.reviews.get(str(ep), {"status": "unreviewed", "note": ""}),
         }
 
-    @app.get("/api/video/{ep}/{key}")
-    def video(ep: int, key: str, request: Request):
+    @app.get("/api/datasets/{name}/video/{ep}/{key}")
+    def video(name: str, ep: int, key: str, request: Request):
+        ds = library.get(name)
         episode = ds.episodes.get(ep)
         if not episode or key not in episode.videos:
             raise HTTPException(404, "no such video")
         return range_response(episode.videos[key].path, request.headers.get("range"))
 
-    @app.post("/api/review/{ep}")
-    async def review(ep: int, request: Request):
+    @app.post("/api/datasets/{name}/review/{ep}")
+    async def review(name: str, ep: int, request: Request):
+        ds = library.get(name)
         if ep not in ds.episodes:
             raise HTTPException(404, f"no episode {ep}")
         body = await request.json()
@@ -862,16 +967,18 @@ def build_app(ds: Dataset) -> FastAPI:
             raise HTTPException(400, "bad status")
         return ds.set_review(ep, status, str(body.get("note", "")))
 
-    @app.get("/api/export")
-    def export():
+    @app.get("/api/datasets/{name}/export")
+    def export(name: str):
         """Episode indices to keep / drop, for filtering before finetuning."""
+        ds = library.get(name)
         good, bad = [], []
         for ep in ds.episodes:
             status = ds.reviews.get(str(ep), {}).get("status", "unreviewed")
             (bad if status == "bad" else good).append(ep)
         return JSONResponse(
-            {"keep": good, "drop": bad, "reviews": ds.reviews},
-            headers={"Content-Disposition": 'attachment; filename="episode_review_export.json"'},
+            {"dataset": name, "keep": good, "drop": bad, "reviews": ds.reviews},
+            headers={"Content-Disposition":
+                     f'attachment; filename="{name}_episode_review.json"'},
         )
 
     return app
@@ -880,7 +987,9 @@ def build_app(ds: Dataset) -> FastAPI:
 def main() -> None:
     ap = argparse.ArgumentParser(description="LeRobot episode QC viewer")
     ap.add_argument("--data", required=True,
-                    help="dataset root directory, or a single .parquet data file")
+                    help="a dataset directory, a single .parquet file, or a "
+                         "directory containing several datasets "
+                         "(e.g. ~/lerobot_datasets)")
     ap.add_argument("--host", default="127.0.0.1",
                     help="use 0.0.0.0 to view from another machine on the LAN")
     ap.add_argument("--port", type=int, default=8000)
@@ -888,17 +997,27 @@ def main() -> None:
                     help="where to store review verdicts (default: <root>/episode_review.json)")
     args = ap.parse_args()
 
-    ds = Dataset(Path(args.data), Path(args.review) if args.review else None)
-    print(f"dataset root   : {ds.root}")
-    print(f"layout         : {ds.codebase_version}   robot: {ds.robot_type}")
-    print(f"episodes       : {len(ds.episodes)}  ({sum(e.length for e in ds.episodes.values())} frames @ {ds.fps:g} fps)")
-    print(f"camera streams : {', '.join(ds.video_keys) or '(none)'}")
-    print(f"reviews        : {ds.review_path}")
-    print(f"\n  ->  http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}\n")
+    library = Library(Path(args.data), Path(args.review) if args.review else None)
+    print(f"root      : {library.root}")
+    if library.multi:
+        print(f"datasets  : {len(library.names)}")
+        for name in library.names:
+            s = library.summary(name)
+            episodes = s["episodes"] if s["episodes"] is not None else "?"
+            print(f"  - {name:<28} {episodes} ep"
+                  + (f"  @ {s['fps']:g}fps" if s.get("fps") else "")
+                  + (f"  ({s['reviewed']} 검수됨)" if s["reviewed"] else ""))
+        print("\n데이터셋은 펼칠 때 읽습니다 (전부 미리 읽으면 첫 화면이 느려집니다).")
+    else:
+        name = library.names[0]
+        print(f"dataset   : {name}")
+
+    shown = "localhost" if args.host in ("127.0.0.1", "0.0.0.0") else args.host
+    print(f"\n  ->  http://{shown}:{args.port}\n")
 
     import uvicorn
 
-    uvicorn.run(build_app(ds), host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(build_app(library), host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

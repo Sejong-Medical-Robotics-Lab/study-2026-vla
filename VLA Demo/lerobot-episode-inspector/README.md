@@ -48,11 +48,40 @@ scp -r sejong@<젯슨-IP>:/home/sejong/lerobot_datasets/piper_pick D:\datasets\
 uv run server.py --data D:\datasets\piper_pick
 ```
 
+### 여러 데이터셋 한 번에 보기
+
+`--data`에 **상위 폴더**를 주면 그 아래 데이터셋을 전부 찾아 왼쪽에 토글로 나열합니다.
+작업마다 서버를 다시 띄울 필요가 없습니다.
+
+```bash
+python server.py --data ~/lerobot_datasets --host 0.0.0.0 --port 8000
+```
+
+```
+▸ blue_block_2      3 ep
+▾ red_bowl_1        30 ep · 12 검수
+    [필터] [에피소드 목록]
+▸ test_gui          2 ep
+```
+
+**처음에는 전부 접혀 있고, 펼칠 때 읽습니다.** 데이터셋 하나를 여는 건 parquet을
+읽고 전 에피소드에 QC를 돌리는 일이라, 폴더 열두 개를 시작할 때 미리 읽으면
+아무도 아직 안 본 데이터 때문에 첫 화면이 느려집니다. 목록에 보이는 에피소드 수는
+`meta/info.json`만 읽어 온 것이라 값이 쌉니다.
+
+한 번에 하나만 펼쳐집니다(아코디언). 좁은 사이드바에 목록 두 개가 겹치면
+스크롤만 길어집니다. 판정은 지금 펼쳐진 데이터셋의 `episode_review.json`에 들어갑니다.
+
+데이터셋 폴더인지는 `meta/info.json`, `data/**.parquet`, 또는 폴더 안의 `*.parquet`
+중 하나로 판단합니다. 아닌 폴더는 그냥 건너뜁니다.
+
+폴더 하나만 주는 기존 사용법도 그대로입니다 — 그때는 자동으로 펼쳐집니다.
+
 ### 옵션
 
 | 옵션 | 설명 |
 |---|---|
-| `--data` | 데이터셋 루트 디렉터리, 또는 단일 `.parquet` 파일 |
+| `--data` | 데이터셋 루트, 단일 `.parquet` 파일, 또는 **여러 데이터셋을 담은 상위 폴더** |
 | `--host` | 다른 머신에서 접속하려면 `0.0.0.0` (기본 `127.0.0.1`) |
 | `--port` | 기본 `8000` |
 | `--review` | 판정 저장 위치 (기본 `<root>/episode_review.json`) |
@@ -265,12 +294,13 @@ ds = LeRobotDataset("piper_pick", episodes=[i for i in range(n_episodes) if i no
 
 | 엔드포인트 | 용도 |
 |---|---|
-| `GET /api/dataset` | 레이아웃, fps, 로봇 타입, 카메라 키, 에피소드 수 |
-| `GET /api/episodes` | 에피소드 목록 + QC 등급 + 판정 상태 |
-| `GET /api/episodes/{i}` | 상태/액션 시계열, 영상 윈도우, QC 상세 |
-| `GET /api/video/{i}/{key}` | mp4 스트리밍 (Range 지원) |
-| `POST /api/review/{i}` | `{"status": "good\|bad\|unsure", "note": "..."}` |
-| `GET /api/export` | keep/drop 목록 |
+| `GET /api/datasets` | 데이터셋 목록 + 에피소드 수 (폴더만 훑음, 읽지 않음) |
+| `GET /api/datasets/{n}` | 레이아웃, fps, 로봇 타입, 카메라 키, 에피소드 수 |
+| `GET /api/datasets/{n}/episodes` | 에피소드 목록 + QC 등급 + 판정 상태 |
+| `GET /api/datasets/{n}/episodes/{i}` | 상태/액션 시계열, 영상 윈도우, QC 상세 |
+| `GET /api/datasets/{n}/video/{i}/{key}` | mp4 스트리밍 (Range 지원) |
+| `POST /api/datasets/{n}/review/{i}` | `{"status": "good\|bad\|unsure", "note": "..."}` |
+| `GET /api/datasets/{n}/export` | keep/drop 목록 |
 
 ---
 
