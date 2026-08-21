@@ -160,6 +160,51 @@ def run_set_roles(script: str) -> dict:
     }
 
 
+def find_running_workers(exclude: set[int] | None = None,
+                         proc_root: Path | None = None) -> list[dict]:
+    """recorder_worker.py processes on this machine, whoever started them.
+
+    The worker outlives the GUI on purpose -- losing the panel must never end a
+    take. The cost is that a restarted server holds no handle on a recording
+    that is still going, so the board reads "대기중" during a live episode, and
+    pressing start would put a second recorder on the same CAN bus and cameras.
+    Finding them by process listing works no matter which server spawned them.
+    """
+    root = proc_root or Path("/proc")
+    if not root.is_dir():
+        return []
+    exclude = set(exclude or ()) | {os.getpid()}
+    found = []
+    for entry in root.iterdir():
+        if not entry.name.isdigit() or int(entry.name) in exclude:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue  # exited between listing and reading, or not ours to read
+        parts = [p.decode("utf-8", "replace") for p in raw.split(b"\x00") if p]
+        cmdline = " ".join(parts)
+        # A zombie has an empty cmdline, so it cannot match -- which is right,
+        # a reaped worker is not recording anything.
+        if "recorder_worker.py" in cmdline and "--dry-run" not in cmdline:
+            found.append({"pid": int(entry.name), "cmdline": cmdline[:400]})
+    return found
+
+
+def orphan_status(exclude: set[int] | None = None) -> dict:
+    workers = find_running_workers(exclude)
+    if not IS_LINUX:
+        return _check("orphan", "다른 녹화", "skip", "Linux가 아니라 확인할 수 없습니다")
+    if not workers:
+        return _check("orphan", "다른 녹화", "ok", "이 GUI 밖에서 도는 녹화는 없습니다")
+    pids = ", ".join(str(w["pid"]) for w in workers)
+    return _check("orphan", "다른 녹화", "fail",
+                  f"이 GUI가 모르는 녹화 워커가 돌고 있습니다 (pid {pids}). "
+                  f"GUI를 재시작하면 화면은 대기중이어도 녹화는 계속됩니다. "
+                  f"저장하고 끝내려면 kill {workers[0]['pid']}",
+                  workers=workers)
+
+
 def set_roles_status(script: str) -> dict:
     path = Path(script).expanduser()
     if not path.exists():
@@ -378,10 +423,12 @@ def lerobot_status(python: str | None = None) -> dict:
 def run_all(*, can_ifaces: list[str], camera_indices: list[int], root: str | None,
             resume: bool, num_episodes: int, episode_time_s: float, fps: float,
             set_roles_path: str, python: str | None = None,
-            demo: bool = False) -> dict:
+            demo: bool = False, own_pids: set[int] | None = None) -> dict:
     # Demo mode drives fake_worker.py, which never imports lerobot -- reporting
     # it missing would train people to click through a red board.
     checks = [] if demo else [lerobot_status(python)]
+    if not demo:
+        checks.append(orphan_status(own_pids))
     checks += [can_status(iface) for iface in can_ifaces]
     checks.append(set_roles_status(set_roles_path))
     checks.append(camera_status(camera_indices))

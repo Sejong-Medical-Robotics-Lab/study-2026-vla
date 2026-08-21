@@ -445,6 +445,16 @@ def build_app(state: RunState, opts: argparse.Namespace) -> FastAPI:
     async def start(request: Request):
         if state.running():
             raise HTTPException(409, "이미 실행 중입니다")
+        # A worker from a previous server instance is still a live recording,
+        # and this one has no handle on it. Starting a second one would put two
+        # recorders on the same arm and cameras.
+        orphans = [] if opts.demo else preflight.find_running_workers()
+        if orphans:
+            pids = ", ".join(str(o["pid"]) for o in orphans)
+            raise HTTPException(409,
+                                f"이 GUI 밖에서 녹화 워커가 이미 돌고 있습니다 (pid {pids}). "
+                                f"같은 로봇에 두 번째 녹화를 붙이면 둘 다 망가집니다. "
+                                f"저장하고 끝내려면 터미널에서:  kill {pids}")
         form = await request.json()
         try:
             argv = build_argv(form)
@@ -576,6 +586,7 @@ def build_app(state: RunState, opts: argparse.Namespace) -> FastAPI:
             set_roles_path=form.get("set_roles_path") or opts.set_roles,
             python=opts.python,
             demo=opts.demo,
+            own_pids={state.proc.pid} if state.running() and state.proc else set(),
         )
 
     @app.post("/api/preflight/can")
