@@ -1,0 +1,791 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeRobot Record GUI</title>
+<!-- Inline, so the page makes no outbound request: the robot PC has no internet. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='%23c62828'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#f4f5f7; --panel:#fff; --line:#dfe3e8; --ink:#1b1f24; --dim:#6b7480;
+  --ok:#1a7f37; --warn:#b8730a; --fail:#c62828; --accent:#1f5fd0;
+  --record:#1a7f37; --reset:#d2820a; --saving:#1f5fd0; --idle:#5c6570;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+     font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif}
+h1,h2,h3{margin:0;font-weight:650}
+button{font:inherit;cursor:pointer;border-radius:7px;border:1px solid var(--line);
+       background:#fff;padding:7px 13px}
+button:hover:not(:disabled){background:#f0f2f5}
+button:disabled{opacity:.4;cursor:not-allowed}
+input,textarea,select{font:inherit;padding:6px 9px;border:1px solid var(--line);
+       border-radius:6px;background:#fff;color:inherit;width:100%}
+input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+
+header{display:flex;align-items:center;gap:12px;padding:10px 18px;
+       background:var(--panel);border-bottom:1px solid var(--line);
+       position:sticky;top:0;z-index:20}
+header h1{font-size:15px;letter-spacing:-.2px}
+.spacer{flex:1}
+.badge{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);
+       color:var(--dim)}
+.badge.demo{background:#fff4d6;border-color:#e8c877;color:#8a6100}
+.dot{width:9px;height:9px;border-radius:50%;background:#c0c6cd;display:inline-block}
+.dot.live{background:var(--ok)}
+.dot.lost{background:var(--fail)}
+
+main{max-width:1180px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.panel > summary{cursor:pointer;padding:11px 15px;font-weight:650;list-style:none;
+       display:flex;align-items:center;gap:9px}
+.panel > summary::-webkit-details-marker{display:none}
+.panel > summary::before{content:"\25B8";color:var(--dim);font-size:11px}
+.panel[open] > summary::before{content:"\25BE"}
+.panel .body{padding:0 15px 15px}
+
+#board{border-radius:12px;padding:22px 26px;color:#fff;background:var(--idle);
+       display:grid;grid-template-columns:1fr auto;gap:18px;align-items:center;
+       transition:background .25s}
+#board.record{background:var(--record)}
+#board.reset{background:var(--reset)}
+#board.saving{background:var(--saving)}
+#board.error{background:var(--fail)}
+#phaseLabel{font-size:clamp(30px,6vw,60px);font-weight:750;line-height:1.05;
+            letter-spacing:-1.5px;white-space:nowrap}
+#phaseHint{font-size:clamp(14px,1.8vw,20px);opacity:.9;margin-top:6px}
+#countdown{font-size:clamp(52px,11vw,120px);font-weight:750;line-height:.9;
+           font-variant-numeric:tabular-nums;text-align:right}
+#countUnit{font-size:.32em;opacity:.75;margin-left:4px}
+#episodeLine{font-size:clamp(15px,2vw,22px);opacity:.92;text-align:right;margin-top:8px;
+             font-variant-numeric:tabular-nums}
+#bar{grid-column:1/-1;height:12px;border-radius:8px;background:rgba(255,255,255,.28);
+     overflow:hidden}
+#barFill{height:100%;width:0;background:#fff;border-radius:8px;transition:width .12s linear}
+
+/* Keep the buttons in fullscreen: someone watching the board from across the
+   room still needs to hit "다시 찍기" without leaving it. */
+body.fullscreen main > *:not(#boardWrap):not(#warnings):not(#controls){display:none}
+body.fullscreen #board{min-height:68vh;align-content:space-evenly}
+body.fullscreen #controls button{padding:16px 26px;font-size:17px}
+/* Fullscreen exists to be read from across the room, so the type has to grow
+   with the box -- the same sizes in a 5x taller panel is just empty green.
+   Capped so "● 녹화 중" still fits on one line beside the countdown. */
+body.fullscreen #phaseLabel{font-size:clamp(44px,8vw,110px)}
+body.fullscreen #phaseHint{font-size:clamp(18px,2.6vw,32px)}
+body.fullscreen #countdown{font-size:clamp(80px,16vw,230px)}
+body.fullscreen #episodeLine{font-size:clamp(22px,3.4vw,44px)}
+body.fullscreen #bar{height:22px}
+body.fullscreen .alert.fail{font-size:24px}
+
+#controls{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+#controls button{padding:11px 18px;font-weight:600}
+.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.primary:hover:not(:disabled){background:#1a52b5}
+.danger{color:var(--fail);border-color:#f0bcbc}
+.danger:hover:not(:disabled){background:#fdecec}
+.key{font-size:11px;opacity:.6;margin-left:5px}
+
+#warnings{display:flex;flex-direction:column;gap:7px}
+#warnings:empty{display:none}
+.alert{padding:11px 15px;border-radius:9px;font-weight:600;border:1px solid}
+.alert.fail{background:#fdecec;border-color:#f0bcbc;color:#8f1d1d;font-size:17px}
+.alert.warn{background:#fff6e5;border-color:#f0d5a0;color:#7a5200}
+.alert.info{background:#eef3fd;border-color:#c4d5f5;color:#1a3f80}
+
+.grid{display:grid;gap:10px}
+#stats{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.stat{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#fbfcfd}
+.stat .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.stat .v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.stat .s{font-size:11px;color:var(--dim)}
+.stat.bad .v{color:var(--fail)}
+.stat.mid .v{color:var(--warn)}
+
+#joints{grid-template-columns:1fr}
+.jrow{display:grid;grid-template-columns:96px 1fr 96px;align-items:center;gap:10px;
+      font-variant-numeric:tabular-nums}
+.jrow .name{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis}
+.jrow .track{height:16px;background:#eef0f3;border-radius:5px;position:relative;overflow:hidden}
+.jrow .span{position:absolute;height:100%;background:#bcd3f7;border-radius:5px}
+.jrow .span.still{background:#f0d6d6}
+.jrow .now{position:absolute;width:3px;height:100%;background:var(--accent)}
+.jrow .val{font-size:12px;text-align:right;color:var(--dim)}
+canvas{width:100%;height:150px;display:block;border:1px solid var(--line);border-radius:8px;
+       background:#fff}
+
+.check{display:grid;grid-template-columns:64px 118px 1fr;gap:10px;padding:8px 0;
+       border-top:1px solid var(--line);align-items:start}
+.check:first-child{border-top:none}
+.tag{font-size:10px;font-weight:700;padding:3px 0;border-radius:5px;text-align:center;
+     letter-spacing:.4px}
+.tag.ok{background:#e3f5e8;color:var(--ok)}
+.tag.warn{background:#fff3dd;color:var(--warn)}
+.tag.fail{background:#fdecec;color:var(--fail)}
+.tag.skip,.tag.info{background:#eef0f3;color:var(--dim)}
+.check .label{font-weight:600;font-size:13px}
+.check .detail{font-size:13px;color:#3d444d}
+
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:11px}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dim)}
+label.f > span{font-weight:600}
+label.cb{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink)}
+label.cb input{width:auto}
+.camrow{display:grid;grid-template-columns:1fr 1fr .8fr .8fr .8fr auto;gap:8px;
+        align-items:end;margin-bottom:8px}
+fieldset{border:1px solid var(--line);border-radius:9px;padding:12px;margin:0 0 12px}
+legend{font-size:12px;font-weight:700;color:var(--dim);padding:0 6px}
+#cmdPreview{background:#1b1f24;color:#d8dee5;padding:12px 14px;border-radius:8px;
+            font-size:12px;white-space:pre-wrap;word-break:break-all;margin-top:8px}
+#cmdPreview.err{background:#fdecec;color:#8f1d1d}
+
+#log{background:#1b1f24;color:#c9d1d9;font-size:12px;padding:12px;border-radius:8px;
+     max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0}
+.muted{color:var(--dim);font-size:12px}
+.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+</style>
+
+<header>
+  <h1>LeRobot Record</h1>
+  <span class="badge demo" id="demoBadge" hidden>DEMO &mdash; 하드웨어 없음</span>
+  <span class="spacer"></span>
+  <span class="muted"><span class="dot" id="link"></span> <span id="linkText">연결 중…</span></span>
+  <button id="fsBtn" title="상태 보드만 크게 봅니다">전체화면</button>
+</header>
+
+<main>
+  <div id="boardWrap">
+    <div id="board">
+      <div>
+        <div id="phaseLabel">대기</div>
+        <div id="phaseHint">설정을 확인하고 시작을 누르세요</div>
+      </div>
+      <div>
+        <div id="countdown">&mdash;<span id="countUnit">s</span></div>
+        <div id="episodeLine">&nbsp;</div>
+      </div>
+      <div id="bar"><div id="barFill"></div></div>
+    </div>
+  </div>
+
+  <!-- Controls sit above the warnings on purpose. Warnings appear and vanish
+       mid-episode; if they were above, every one of them would shove the
+       buttons down under the hand reaching for them. -->
+  <div id="controls">
+    <button id="startBtn" class="primary">시작</button>
+    <button id="earlyBtn" disabled>이번 에피소드 끝<span class="key">&rarr;</span></button>
+    <button id="redoBtn" disabled>다시 찍기<span class="key">&larr;</span></button>
+    <button id="stopBtn" disabled>정지 (저장)<span class="key">Esc</span></button>
+    <button id="killBtn" class="danger" disabled>강제 종료</button>
+    <span class="spacer"></span>
+    <span class="muted" id="runInfo"></span>
+  </div>
+
+  <div id="warnings"></div>
+
+  <details class="panel" id="metricsPanel" open>
+    <summary>실시간 지표</summary>
+    <div class="body">
+      <div class="grid" id="stats"></div>
+      <h3 style="margin:16px 0 8px;font-size:13px;color:var(--dim)">조인트 &mdash; 이번 에피소드 가동범위</h3>
+      <div id="joints" class="grid"></div>
+      <canvas id="chart" width="1100" height="150" style="margin-top:12px"></canvas>
+      <div class="muted" style="margin-top:6px">최근 30초, 조인트별로 정규화한 observation.state.</div>
+    </div>
+  </details>
+
+  <details class="panel" id="preflightPanel" open>
+    <summary>준비 확인</summary>
+    <div class="body">
+      <div class="row" style="margin-bottom:10px">
+        <button id="pfBtn">다시 검사</button>
+        <button id="canBtn">CAN 초기화</button>
+        <button id="rolesBtn">역할 설정 (set_roles.py)</button>
+        <span class="muted" id="pfNote"></span>
+      </div>
+      <div id="checks"></div>
+      <pre id="pfLog" class="muted" style="white-space:pre-wrap;margin-top:10px"></pre>
+    </div>
+  </details>
+
+  <details class="panel" id="formPanel" open>
+    <summary>수집 설정</summary>
+    <div class="body">
+      <div class="row" style="margin-bottom:12px">
+        <select id="presetSel" style="width:auto;min-width:180px">
+          <option value="">프리셋 불러오기…</option>
+        </select>
+        <button id="presetSave">현재 설정 저장</button>
+        <button id="presetDel">삭제</button>
+      </div>
+
+      <fieldset>
+        <legend>로봇 / 텔레옵</legend>
+        <div class="fields">
+          <label class="f"><span>robot.type</span><input id="robot_type"></label>
+          <label class="f"><span>robot.port</span><input id="robot_port"></label>
+          <label class="f"><span>robot.id</span><input id="robot_id"></label>
+          <label class="f"><span>teleop.type</span><input id="teleop_type"></label>
+          <label class="f"><span>teleop.port</span><input id="teleop_port"></label>
+          <label class="f"><span>teleop.id</span><input id="teleop_id"></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>카메라</legend>
+        <div id="cams"></div>
+        <button id="camAdd" type="button">+ 카메라 추가</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>데이터셋</legend>
+        <div class="fields">
+          <label class="f"><span>repo_id</span><input id="ds_repo_id"></label>
+          <label class="f" style="grid-column:span 2"><span>root &mdash; 저장 경로</span><input id="ds_root"></label>
+        </div>
+        <label class="f" style="margin-top:11px"><span>single_task &mdash; 정책이 학습할 지시문</span>
+          <input id="ds_single_task"></label>
+        <div class="fields" style="margin-top:11px">
+          <label class="f"><span>num_episodes</span><input id="ds_num_episodes" type="number" min="1"></label>
+          <label class="f"><span>episode_time_s</span><input id="ds_episode_time_s" type="number" min="1"></label>
+          <label class="f"><span>reset_time_s</span><input id="ds_reset_time_s" type="number" min="0"></label>
+          <label class="f"><span>fps</span><input id="ds_fps" type="number" min="1"></label>
+        </div>
+        <div class="row" style="margin-top:11px">
+          <label class="cb"><input type="checkbox" id="ds_push_to_hub"> push_to_hub</label>
+          <label class="cb"><input type="checkbox" id="resume"> resume &mdash; 기존 데이터셋에 이어서</label>
+          <label class="cb"><input type="checkbox" id="play_sounds"> 로봇 PC에서도 음성 안내</label>
+        </div>
+      </fieldset>
+
+      <div class="muted">실제로 실행되는 명령입니다:</div>
+      <pre id="cmdPreview">&mdash;</pre>
+    </div>
+  </details>
+
+  <details class="panel" id="logPanel">
+    <summary>워커 로그</summary>
+    <div class="body"><pre id="log"></pre></div>
+  </details>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts) => {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  return res.status === 204 ? null : res.json();
+};
+const postJSON = (path, body) => api(path, {
+  method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify(body || {}),
+});
+
+const PHASE = {
+  starting: {cls: "", label: "시작 중", hint: "로봇과 카메라를 여는 중입니다"},
+  record:   {cls: "record", label: "● 녹화 중", hint: "지금 데이터가 기록되고 있습니다"},
+  reset:    {cls: "reset", label: "■ 리셋", hint: "물체를 제자리로 되돌리세요"},
+  saving:   {cls: "saving", label: "저장 중", hint: "영상 인코딩 중 — 로봇을 건드리지 마세요"},
+  rerecording: {cls: "reset", label: "다시 찍기", hint: "직전 에피소드를 버리고 다시 시작합니다"},
+  stopping: {cls: "saving", label: "정지 중", hint: "데이터셋을 마무리하는 중입니다"},
+  done:     {cls: "", label: "완료", hint: "수집이 끝났습니다"},
+  error:    {cls: "error", label: "오류", hint: "로그를 확인하세요"},
+  killed:   {cls: "error", label: "강제 종료됨", hint: "마지막 에피소드는 검수 후 사용하세요"},
+  idle:     {cls: "", label: "대기", hint: "설정을 확인하고 시작을 누르세요"},
+};
+
+let CFG = null;
+let last = null;        // last SSE payload
+let lastPhase = null;   // for the transition beep
+let tickAt = 0;         // performance.now() when the last tick landed
+let runId = null;       // server's run counter; a change clears the log and chart
+const history = [];     // [{t, state:[...]}] for the chart
+
+/* ------------------------------------------------------------------ form */
+
+function camRow(cam) {
+  const wrap = document.createElement("div");
+  wrap.className = "camrow";
+  wrap.innerHTML =
+    '<label class="f"><span>이름</span><input class="c_name"></label>' +
+    '<label class="f"><span>index_or_path</span><input class="c_index"></label>' +
+    '<label class="f"><span>width</span><input class="c_width" type="number"></label>' +
+    '<label class="f"><span>height</span><input class="c_height" type="number"></label>' +
+    '<label class="f"><span>fps</span><input class="c_fps" type="number"></label>' +
+    '<button type="button" class="c_del">삭제</button>';
+  wrap.querySelector(".c_name").value = cam.name || "";
+  wrap.querySelector(".c_index").value = cam.index_or_path ?? "";
+  wrap.querySelector(".c_width").value = cam.width ?? 640;
+  wrap.querySelector(".c_height").value = cam.height ?? 480;
+  wrap.querySelector(".c_fps").value = cam.fps ?? 30;
+  wrap.dataset.type = cam.type || "opencv";
+  wrap.querySelector(".c_del").onclick = () => { wrap.remove(); schedulePreview(); };
+  wrap.oninput = schedulePreview;
+  return wrap;
+}
+
+function fillForm(f) {
+  $("robot_type").value = f.robot?.type || "";
+  $("robot_port").value = f.robot?.port || "";
+  $("robot_id").value = f.robot?.id || "";
+  $("teleop_type").value = f.teleop?.type || "";
+  $("teleop_port").value = f.teleop?.port || "";
+  $("teleop_id").value = f.teleop?.id || "";
+  const d = f.dataset || {};
+  $("ds_repo_id").value = d.repo_id || "";
+  $("ds_root").value = d.root || "";
+  $("ds_single_task").value = d.single_task || "";
+  $("ds_num_episodes").value = d.num_episodes ?? 30;
+  $("ds_episode_time_s").value = d.episode_time_s ?? 20;
+  $("ds_reset_time_s").value = d.reset_time_s ?? 20;
+  $("ds_fps").value = d.fps ?? 30;
+  $("ds_push_to_hub").checked = !!d.push_to_hub;
+  $("resume").checked = !!f.resume;
+  $("play_sounds").checked = !!f.play_sounds;
+  $("cams").replaceChildren(...(f.cameras || []).map(camRow));
+  schedulePreview();
+}
+
+function readForm() {
+  const cams = [...document.querySelectorAll(".camrow")].map((r) => ({
+    name: r.querySelector(".c_name").value.trim(),
+    type: r.dataset.type || "opencv",
+    index_or_path: r.querySelector(".c_index").value.trim(),
+    width: +r.querySelector(".c_width").value || 640,
+    height: +r.querySelector(".c_height").value || 480,
+    fps: +r.querySelector(".c_fps").value || 30,
+  })).filter((c) => c.name);
+  return {
+    robot: {type: $("robot_type").value.trim(), port: $("robot_port").value.trim(),
+            id: $("robot_id").value.trim()},
+    teleop: {type: $("teleop_type").value.trim(), port: $("teleop_port").value.trim(),
+             id: $("teleop_id").value.trim()},
+    cameras: cams,
+    dataset: {
+      repo_id: $("ds_repo_id").value.trim(),
+      root: $("ds_root").value.trim(),
+      single_task: $("ds_single_task").value.trim(),
+      num_episodes: +$("ds_num_episodes").value,
+      episode_time_s: +$("ds_episode_time_s").value,
+      reset_time_s: +$("ds_reset_time_s").value,
+      fps: +$("ds_fps").value,
+      push_to_hub: $("ds_push_to_hub").checked,
+    },
+    resume: $("resume").checked,
+    play_sounds: $("play_sounds").checked,
+    set_roles_path: CFG?.defaults?.set_roles_path || "",
+  };
+}
+
+let previewTimer = null;
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const el = $("cmdPreview");
+    try {
+      const r = await fetch("/api/preview", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(readForm()),
+      });
+      const body = await r.json();
+      el.classList.toggle("err", !r.ok);
+      el.textContent = r.ok ? body.command_line : body.error;
+    } catch (e) {
+      el.classList.add("err");
+      el.textContent = String(e);
+    }
+  }, 250);
+}
+
+/* ------------------------------------------------------------- preflight */
+
+async function runPreflight() {
+  $("pfNote").textContent = "검사 중…";
+  try {
+    const r = await postJSON("/api/preflight", readForm());
+    renderChecks(r);
+    $("pfNote").textContent = "";
+    // Anything red is worth interrupting for; a clean board can stay folded.
+    if (r.level === "fail") $("preflightPanel").open = true;
+  } catch (e) {
+    $("pfNote").textContent = "검사 실패: " + e.message;
+  }
+}
+
+function renderChecks(result) {
+  const marks = {ok: "OK", warn: "주의", fail: "실패", skip: "생략", info: "안내"};
+  $("checks").replaceChildren(...result.checks.map((c) => {
+    const div = document.createElement("div");
+    div.className = "check";
+    const tag = document.createElement("span");
+    tag.className = "tag " + c.level;
+    tag.textContent = marks[c.level] || c.level;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = c.label;
+    const detail = document.createElement("div");
+    detail.className = "detail";
+    detail.textContent = c.detail;
+    div.append(tag, label, detail);
+    return div;
+  }));
+}
+
+/* ----------------------------------------------------------------- board */
+
+// Browsers refuse to start audio without a user gesture, and the first phase
+// change can land before anything else is clicked. Priming the context on the
+// start button -- a real gesture -- is what makes the phase beeps actually sound.
+function primeAudio() {
+  try {
+    beep.ctx = beep.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    if (beep.ctx.state === "suspended") beep.ctx.resume();
+  } catch (_) { /* no audio device; the colour change still carries the phase */ }
+}
+
+function beep(freq, ms) {
+  try {
+    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + ms / 1000);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + ms / 1000);
+  } catch (_) { /* autoplay policy, no speakers -- the colour still changed */ }
+}
+
+const BEEPS = {record: [880, 160], reset: [520, 300], saving: [660, 100],
+               done: [740, 400], error: [220, 500]};
+
+function renderBoard(p) {
+  const tick = p.tick || {};
+  const phase = p.running ? (tick.phase || "starting")
+                          : (tick.phase === "error" ? "error" : (p.exit_code === null ? "idle" : (tick.phase || "done")));
+  const meta = PHASE[phase] || PHASE.idle;
+
+  $("board").className = meta.cls;
+  $("phaseLabel").textContent = meta.label;
+  $("phaseHint").textContent = tick.error || meta.hint;
+
+  if (phase !== lastPhase) {
+    if (lastPhase !== null && BEEPS[phase]) beep(...BEEPS[phase]);
+    lastPhase = phase;
+  }
+
+  const total = tick.phase_total_s;
+  const target = tick.episode_target;
+  const no = tick.episode_no;
+  $("episodeLine").textContent = (no && target) ? `에피소드 ${no} / ${target}`
+                               : (no ? `에피소드 ${no}` : " ");
+  if (!total) {
+    $("countdown").innerHTML = "&mdash;<span id=\"countUnit\">s</span>";
+    $("barFill").style.width = phase === "done" ? "100%" : "0";
+  }
+}
+
+// The tick carries elapsed measured in frames; between ticks we extrapolate off
+// the wall clock so the number moves smoothly instead of stepping 10x a second.
+function paintCountdown() {
+  const tick = last?.tick;
+  if (!tick || !tick.phase_total_s || !last.running) return;
+  const drift = (performance.now() - tickAt) / 1000;
+  const elapsed = Math.min((tick.phase_elapsed_s || 0) + drift, tick.phase_total_s);
+  const left = Math.max(0, tick.phase_total_s - elapsed);
+  $("countdown").innerHTML = left.toFixed(1) + '<span id="countUnit">s</span>';
+  $("barFill").style.width = (100 * elapsed / tick.phase_total_s).toFixed(1) + "%";
+}
+setInterval(paintCountdown, 60);
+
+/* --------------------------------------------------------------- metrics */
+
+function stat(k, v, sub, level) {
+  return `<div class="stat ${level || ""}"><div class="k">${k}</div>` +
+         `<div class="v">${v}</div><div class="s">${sub || "&nbsp;"}</div></div>`;
+}
+
+function renderMetrics(tick) {
+  const fps = tick.fps_actual, target = tick.fps_target;
+  const fpsLevel = !fps ? "" : (fps < target * 0.9 ? "bad" : (fps < target * 0.97 ? "mid" : ""));
+  const cams = Object.entries(tick.cameras || {});
+  const spans = tick.state_span || [];
+  const moved = spans.filter((s) => s >= 1.0).length;
+
+  const cards = [
+    stat("실제 fps", fps ? fps.toFixed(1) : "&mdash;", `목표 ${target || "?"}`, fpsLevel),
+    stat("밀린 프레임", tick.late_frames ?? 0, "이번 단계", tick.late_frames > 5 ? "mid" : ""),
+    stat("움직인 조인트", `${moved} / ${spans.length || 0}`, "가동범위 1.0 이상",
+         (spans.length && moved === 0) ? "bad" : ""),
+    stat("그리퍼 개폐", tick.gripper_cycles ?? 0, "이번 에피소드",
+         (tick.phase === "record" && tick.gripper_cycles === 0) ? "mid" : ""),
+    stat("프레임", tick.frames ?? 0, `누적 ${tick.total_frames ?? 0}`),
+    stat("다시 찍기", tick.rerecords ?? 0, "이번 세션"),
+  ];
+  for (const [name, cam] of cams) {
+    const frozen = cam.diff !== null && cam.diff !== undefined && cam.diff < 0.5;
+    cards.push(stat(name, cam.w ? `${cam.w}×${cam.h}` : "&mdash;",
+                    cam.diff == null ? "변화량 측정 중" : `변화량 ${cam.diff.toFixed(2)}`,
+                    frozen ? "bad" : ""));
+  }
+  $("stats").innerHTML = cards.join("");
+
+  const names = tick.joint_names || [];
+  const state = tick.state || [];
+  const rows = names.map((name, i) => {
+    const span = spans[i] ?? 0;
+    const still = span < 1.0;
+    // Widths are relative to the widest joint this episode, so one clearly
+    // frozen joint among moving ones stands out.
+    const scale = Math.max(...spans, 1);
+    const w = (100 * span / scale).toFixed(1);
+    return `<div class="jrow"><div class="name" title="${name}">${name}</div>` +
+           `<div class="track"><div class="span ${still ? "still" : ""}" style="width:${w}%"></div></div>` +
+           `<div class="val">${(state[i] ?? 0).toFixed(1)} <span style="opacity:.6">±${span.toFixed(1)}</span></div></div>`;
+  });
+  $("joints").innerHTML = rows.join("") ||
+    '<div class="muted">아직 관측값이 없습니다.</div>';
+}
+
+function renderWarnings(p) {
+  const tick = p.tick || {};
+  const items = [...(tick.warnings || [])];
+  if (p.stale && p.running) {
+    items.unshift({level: "warn", text: "워커에서 상태가 오지 않습니다 (3초 이상)"});
+  }
+  if (!p.running && p.exit_code) {
+    // A force-quit exits non-zero by design; that is not a fault to report as one.
+    items.unshift({level: tick.phase === "killed" ? "warn" : "fail",
+                   text: tick.error || `워커가 코드 ${p.exit_code} 로 종료했습니다`});
+  }
+  $("warnings").replaceChildren(...items.map((w) => {
+    const div = document.createElement("div");
+    div.className = "alert " + (w.level || "info");
+    div.textContent = w.text;
+    return div;
+  }));
+}
+
+/* ----------------------------------------------------------------- chart */
+
+function pushHistory(tick) {
+  if (!tick.state || !tick.state.length) return;
+  history.push(tick.state.slice());
+  const cap = 30 * 10; // 30s at the 10 Hz tick rate
+  if (history.length > cap) history.splice(0, history.length - cap);
+}
+
+function drawChart() {
+  const c = $("chart"), ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  if (history.length < 2) return;
+  const dims = history[0].length;
+  for (let d = 0; d < dims; d++) {
+    let lo = Infinity, hi = -Infinity;
+    for (const row of history) {
+      const v = row[d];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    // A joint that never moved would divide by ~0 and turn noise into a
+    // full-height scribble; pin it to the middle of its lane instead.
+    const range = hi - lo;
+    const lane = h / dims;
+    ctx.beginPath();
+    ctx.strokeStyle = `hsl(${(d * 47) % 360} 62% 45%)`;
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i < history.length; i++) {
+      const x = w * i / (history.length - 1);
+      const norm = range < 1e-6 ? 0.5 : (history[i][d] - lo) / range;
+      const y = lane * d + lane * (1 - norm) * 0.86 + lane * 0.07;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+
+/* ------------------------------------------------------------------- run */
+
+let wasRunning = null;
+
+function setButtons(p) {
+  const r = p.running;
+  $("startBtn").disabled = r;
+  $("earlyBtn").disabled = !r;
+  $("redoBtn").disabled = !r;
+  $("stopBtn").disabled = !r;
+  $("killBtn").disabled = !r;
+  // Fold the form away when a run starts and bring it back when one ends, but
+  // only on the transition -- doing it every render would slam the panel shut
+  // under anyone who opened it mid-run to check what they had entered.
+  if (wasRunning !== r) {
+    $("formPanel").open = !r;
+    if (r) $("preflightPanel").open = false;
+    wasRunning = r;
+  }
+  for (const id of ["pfBtn", "canBtn", "rolesBtn"]) $(id).disabled = r;
+  const bits = [];
+  if (p.pid) bits.push("pid " + p.pid);
+  if (p.started_at) {
+    const secs = Math.round((p.finished_at || Date.now() / 1000) - p.started_at);
+    bits.push(`${Math.floor(secs / 60)}분 ${secs % 60}초`);
+  }
+  if (!r && p.exit_code !== null) bits.push("exit " + p.exit_code);
+  $("runInfo").textContent = bits.join(" · ");
+}
+
+function render(p) {
+  last = p;
+  tickAt = performance.now();
+  renderBoard(p);
+  renderWarnings(p);
+  renderMetrics(p.tick || {});
+  if (p.running) { pushHistory(p.tick || {}); drawChart(); }
+  setButtons(p);
+}
+
+function connect() {
+  const es = new EventSource("/api/events");
+  es.onopen = () => { $("link").className = "dot live"; $("linkText").textContent = "연결됨"; };
+  es.onmessage = (ev) => {
+    const p = JSON.parse(ev.data);
+    // A new run means the panes below are about the previous one. Keyed off the
+    // server's run_id rather than our own start() call, so a second browser
+    // watching the same session resets too.
+    if (p.run_id !== runId) {
+      runId = p.run_id;
+      $("log").textContent = "";
+      history.length = 0;
+      lastPhase = null;
+    }
+    if (p.log && p.log.length) {
+      const el = $("log");
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+      el.textContent += p.log.join("\n") + "\n";
+      if (atBottom) el.scrollTop = el.scrollHeight;
+      if (p.log.some((l) => /Traceback|Error|error|실패/.test(l))) $("logPanel").open = true;
+    }
+    render(p);
+  };
+  es.onerror = () => {
+    $("link").className = "dot lost";
+    $("linkText").textContent = "끊김 — 재연결 중";
+    es.close();
+    setTimeout(connect, 1500);
+  };
+}
+
+async function start() {
+  primeAudio();
+  const form = readForm();
+  let pf = null;
+  try { pf = await postJSON("/api/preflight", form); } catch (_) {}
+  if (pf) {
+    renderChecks(pf);
+    if (pf.level === "fail") {
+      const bad = pf.checks.filter((c) => c.level === "fail")
+                           .map((c) => `• ${c.label}: ${c.detail}`).join("\n");
+      $("preflightPanel").open = true;
+      if (!confirm(`준비 확인에서 문제가 있습니다:\n\n${bad}\n\n그래도 시작할까요?`)) return;
+    }
+  }
+  try {
+    await postJSON("/api/start", form);
+  } catch (e) {
+    alert("시작하지 못했습니다: " + e.message);
+  }
+}
+
+const send = (command) => postJSON("/api/command", {command}).catch((e) => alert(e.message));
+
+/* ------------------------------------------------------------------ wire */
+
+$("startBtn").onclick = start;
+$("earlyBtn").onclick = () => send("exit_early");
+$("redoBtn").onclick = () => send("rerecord");
+$("stopBtn").onclick = () => send("stop");
+$("killBtn").onclick = () => {
+  if (confirm("강제 종료하면 저장 중이던 에피소드가 깨질 수 있습니다.\n" +
+              "지금까지 찍은 것을 살리려면 '정지 (저장)'을 쓰세요.\n\n그래도 강제 종료할까요?"))
+    postJSON("/api/kill").catch((e) => alert(e.message));
+};
+$("pfBtn").onclick = runPreflight;
+$("camAdd").onclick = () => { $("cams").append(camRow({name: "", type: "opencv"})); schedulePreview(); };
+$("fsBtn").onclick = () => {
+  document.body.classList.toggle("fullscreen");
+  $("fsBtn").textContent = document.body.classList.contains("fullscreen") ? "돌아가기" : "전체화면";
+};
+
+$("canBtn").onclick = async () => {
+  const f = readForm();
+  const ifaces = [f.robot.port, f.teleop.port].filter((p) => /^can\d+$/.test(p));
+  $("pfLog").textContent = "CAN 초기화 중…";
+  try {
+    const r = await postJSON("/api/preflight/can", {ifaces});
+    $("pfLog").textContent = r.log + (r.hint ? "\n\n" + r.hint : "");
+    runPreflight();
+  } catch (e) { $("pfLog").textContent = "실패: " + e.message; }
+};
+
+$("rolesBtn").onclick = async () => {
+  $("pfLog").textContent = "set_roles.py 실행 중…";
+  try {
+    const r = await postJSON("/api/preflight/roles", {path: CFG?.defaults?.set_roles_path});
+    $("pfLog").textContent = r.log;
+  } catch (e) { $("pfLog").textContent = "실패: " + e.message; }
+};
+
+async function loadPresets(select) {
+  const names = await api("/api/presets");
+  $("presetSel").replaceChildren(
+    new Option("프리셋 불러오기…", ""),
+    ...names.map((n) => new Option(n, n)));
+  if (select) $("presetSel").value = select;
+}
+
+$("presetSel").onchange = async (e) => {
+  if (!e.target.value) return;
+  fillForm(await api("/api/presets/" + encodeURIComponent(e.target.value)));
+};
+$("presetSave").onclick = async () => {
+  const name = prompt("프리셋 이름", $("ds_repo_id").value.split("/").pop() || "preset");
+  if (!name) return;
+  await postJSON("/api/presets/" + encodeURIComponent(name), readForm());
+  loadPresets(name);
+};
+$("presetDel").onclick = async () => {
+  const name = $("presetSel").value;
+  if (!name || !confirm(`프리셋 "${name}" 을 삭제할까요?`)) return;
+  await api("/api/presets/" + encodeURIComponent(name), {method: "DELETE"});
+  loadPresets();
+};
+
+document.querySelectorAll("#formPanel input").forEach((el) => {
+  el.addEventListener("input", schedulePreview);
+});
+
+// Same keys LeRobot itself uses, so muscle memory still works.
+document.addEventListener("keydown", (e) => {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")) return;
+  if (!last?.running) return;
+  if (e.key === "ArrowRight") { e.preventDefault(); send("exit_early"); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); send("rerecord"); }
+  else if (e.key === "Escape") { e.preventDefault(); if (confirm("정지할까요? 지금까지 찍은 것은 저장됩니다.")) send("stop"); }
+});
+
+(async function init() {
+  CFG = await api("/api/config");
+  if (CFG.demo) $("demoBadge").hidden = false;
+  fillForm(CFG.defaults);
+  await loadPresets();
+  connect();
+  runPreflight();
+})();
+</script>
