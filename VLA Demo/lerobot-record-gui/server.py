@@ -516,6 +516,13 @@ def build_app(state: RunState, opts: argparse.Namespace) -> FastAPI:
             last_version = -1
             last_send = 0.0
             while True:
+                # Uvicorn's graceful shutdown waits for in-flight requests, and
+                # this one only ends when the browser goes away -- so without
+                # this check Ctrl-C hangs for as long as a tab stays open.
+                # should_exit flips the moment the signal lands.
+                server = getattr(app.state, "server", None)
+                if server is not None and server.should_exit:
+                    return
                 if await request.is_disconnected():
                     return
                 lines, cursor = state.logs_since(cursor)
@@ -694,7 +701,21 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run(app, host=opts.host, port=opts.port, log_level="warning")
+    # Built by hand rather than uvicorn.run() so the SSE endpoint can see
+    # should_exit and stop streaming; the timeout is the backstop for anything
+    # else that will not let go.
+    config = uvicorn.Config(app, host=opts.host, port=opts.port, log_level="warning",
+                            timeout_graceful_shutdown=5)
+    server = uvicorn.Server(config)
+    app.state.server = server
+    server.run()
+
+    # The worker is its own session, so it outlives the GUI on purpose -- losing
+    # the panel should never end a recording. Say so, with the way to stop it.
+    if state.running() and state.proc is not None:
+        print(f"\n주의: 녹화 워커가 아직 돌고 있습니다 (pid {state.proc.pid}).")
+        print(f"      저장하고 끝내려면:  kill {state.proc.pid}")
+        print(f"      즉시 죽이려면:      kill -9 {state.proc.pid}")
 
 
 if __name__ == "__main__":
