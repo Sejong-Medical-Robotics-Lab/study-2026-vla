@@ -549,14 +549,27 @@ def describe_plugins() -> dict[str, list[str]]:
     }
 
 
+DISCOVER_SUFFIX = "discover_packages_path"
+
+
+def _is_discover_arg(arg: str) -> bool:
+    key, sep, _value = arg.lstrip("-").partition("=")
+    return bool(sep) and key.endswith(DISCOVER_SUFFIX)
+
+
 def _discover_args(argv: list[str]) -> list[str]:
-    """Package names given via LeRobot's --<field>.discover_packages_path flags."""
-    out = []
+    """Package names given via LeRobot's --<field>.discover_packages_path flags.
+
+    Deduplicated: robot and teleop usually name the same package, and importing
+    it twice just prints the plugin's banner twice.
+    """
+    seen = []
     for arg in argv:
-        key, sep, value = arg.lstrip("-").partition("=")
-        if sep and key.endswith("discover_packages_path") and value:
-            out.append(value)
-    return out
+        if _is_discover_arg(arg):
+            value = arg.split("=", 1)[1]
+            if value and value not in seen:
+                seen.append(value)
+    return seen
 
 
 def _known_choices(module_path: str) -> str:
@@ -767,10 +780,16 @@ def dry_run(module, lerobot_argv: list[str]) -> int:
     # lines of usage and raises SystemExit -- not an Exception, so it sailed past
     # the handler and buried the one line that says what was wrong. Capture the
     # noise and surface only the verdict.
+    # LeRobot's parser.wrap() strips the discover_packages_path flags after
+    # loading the plugins and before handing the rest to draccus. Skipping that
+    # step here made a correct command look rejected -- a dry run that does not
+    # mirror the real path is worse than no dry run.
+    parse_argv = [arg for arg in lerobot_argv if not _is_discover_arg(arg)]
+
     noise = io.StringIO()
     try:
         with contextlib.redirect_stderr(noise), contextlib.redirect_stdout(io.StringIO()):
-            cfg = draccus.parse(config_class=config_class, args=lerobot_argv)
+            cfg = draccus.parse(config_class=config_class, args=parse_argv)
     except SystemExit:
         lines = [line.strip() for line in noise.getvalue().splitlines() if line.strip()]
         verdict = next((line for line in reversed(lines) if "error:" in line),
