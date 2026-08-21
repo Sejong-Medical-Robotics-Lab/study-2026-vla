@@ -45,6 +45,8 @@ GUI that costs recording quality is a failure.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import pkgutil
 import signal
@@ -710,8 +712,20 @@ def dry_run(module, lerobot_argv: list[str]) -> int:
         # resolved, we just cannot judge the flags. Do not call that a config error.
         print("config          : draccus 없음 — 플래그 검증을 건너뜁니다")
         return 0
+    # draccus rejects a bad flag through argparse, which prints a few hundred
+    # lines of usage and raises SystemExit -- not an Exception, so it sailed past
+    # the handler and buried the one line that says what was wrong. Capture the
+    # noise and surface only the verdict.
+    noise = io.StringIO()
     try:
-        cfg = draccus.parse(config_class=config_class, args=lerobot_argv)
+        with contextlib.redirect_stderr(noise), contextlib.redirect_stdout(io.StringIO()):
+            cfg = draccus.parse(config_class=config_class, args=lerobot_argv)
+    except SystemExit:
+        lines = [line.strip() for line in noise.getvalue().splitlines() if line.strip()]
+        verdict = next((line for line in reversed(lines) if "error:" in line),
+                       lines[-1] if lines else "reason not reported")
+        print(f"config          : REJECTED -- {verdict}")
+        return 1
     except Exception as exc:
         print(f"config          : FAILED to parse -- {type(exc).__name__}: {exc}")
         return 1
