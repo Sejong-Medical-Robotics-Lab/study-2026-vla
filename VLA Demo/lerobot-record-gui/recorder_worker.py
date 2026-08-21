@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib
 import io
 import json
 import pkgutil
@@ -513,14 +514,49 @@ def add_plugin_paths(paths: list[str]) -> None:
             print(f"[worker] sys.path += {path}", flush=True)
 
 
-def describe_plugins() -> list[str]:
-    """Which third-party device packages are visible from here."""
-    prefixes = ("lerobot_robot_", "lerobot_teleoperator_", "lerobot_camera_")
-    found = []
-    for module in pkgutil.iter_modules():
-        if module.name.startswith(prefixes):
-            found.append(module.name)
-    return sorted(set(found))
+PLUGIN_PREFIXES = ("lerobot_robot_", "lerobot_teleoperator_", "lerobot_camera_")
+
+
+def describe_plugins() -> dict[str, list[str]]:
+    """Third-party device packages, both as LeRobot sees them and as they really are.
+
+    LeRobot registers third-party hardware by walking sys.path with
+    pkgutil.iter_modules(). That only sees real directories, so a package
+    installed with `pip install -e .` (PEP 660, exposed through a meta-path
+    finder) is importable but invisible to the scan -- huggingface/lerobot#2460.
+
+    Asking pkgutil alone would just reproduce that bug and report nothing.
+    importlib.metadata knows about the editable install, so the gap between the
+    two lists is the diagnosis: installed, importable, and still unregistered.
+    """
+    scanned = {m.name for m in pkgutil.iter_modules() if m.name.startswith(PLUGIN_PREFIXES)}
+
+    installed = set()
+    try:
+        from importlib import metadata
+
+        for dist in metadata.distributions():
+            name = (dist.metadata["Name"] or "").replace("-", "_")
+            if name.startswith(PLUGIN_PREFIXES):
+                installed.add(name)
+    except Exception:
+        pass
+
+    return {
+        "scanned": sorted(scanned),
+        "installed": sorted(installed),
+        "hidden": sorted(installed - scanned),
+    }
+
+
+def _discover_args(argv: list[str]) -> list[str]:
+    """Package names given via LeRobot's --<field>.discover_packages_path flags."""
+    out = []
+    for arg in argv:
+        key, sep, value = arg.lstrip("-").partition("=")
+        if sep and key.endswith("discover_packages_path") and value:
+            out.append(value)
+    return out
 
 
 def _known_choices(module_path: str) -> str:
@@ -695,7 +731,22 @@ def dry_run(module, lerobot_argv: list[str]) -> int:
     # The single most useful line when a custom robot will not resolve: whether
     # the type is registered at all, from *this* interpreter and directory.
     plugins = describe_plugins()
-    print(f"3rd-party pkgs  : {', '.join(plugins) if plugins else '(none visible)'}")
+    print(f"3rd-party 탐색됨 : {', '.join(plugins['scanned']) or '(없음)'}")
+    print(f"3rd-party 설치됨 : {', '.join(plugins['installed']) or '(없음)'}")
+    for name in plugins["hidden"]:
+        print(f"  ! {name}: 설치돼 있지만 LeRobot 자동 탐색에 안 잡힙니다 "
+              f"(editable 설치, lerobot#2460).")
+        print(f"    -> --robot.discover_packages_path={name} 를 붙이면 등록됩니다")
+    # Load whatever the flags ask for before listing types, the same way
+    # record() will -- otherwise the dry run reports the registry as it looks
+    # *without* the fix and a working setup still reads as broken.
+    for pkg in _discover_args(lerobot_argv):
+        try:
+            importlib.import_module(pkg)
+            print(f"plugin 로드     : {pkg}")
+        except Exception as exc:
+            print(f"plugin 실패     : {pkg} -- {type(exc).__name__}: {exc}")
+
     for label, path in (("robot", "lerobot.robots"), ("teleop", "lerobot.teleoperators")):
         print(f"{label + ' types':<16}: {_known_choices(path)}")
 

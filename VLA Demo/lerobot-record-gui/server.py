@@ -626,9 +626,14 @@ def _preset_path(name: str) -> Path:
 
 def _defaults(opts: argparse.Namespace) -> dict:
     """The session the lab actually runs, pre-filled."""
+    # discover_packages_path is filled in because lerobot_robot_piper is an
+    # editable install: importable, but invisible to LeRobot's sys.path scan
+    # (lerobot#2460), so the type will not resolve without being named here.
     return {
-        "robot": {"type": "piper_follower", "port": "can5", "id": "piper_follower"},
-        "teleop": {"type": "piper_leader", "port": "can4", "id": "piper_leader"},
+        "robot": {"type": "piper_follower", "port": "can5", "id": "piper_follower",
+                  "discover_packages_path": opts.piper_package},
+        "teleop": {"type": "piper_leader", "port": "can4", "id": "piper_leader",
+                   "discover_packages_path": opts.piper_package},
         "cameras": [
             {"name": "front", "type": "opencv", "index_or_path": "10",
              "width": 640, "height": 480, "fps": 30},
@@ -669,6 +674,9 @@ def main() -> None:
     ap.add_argument("--plugin-path", action="append", default=[], metavar="DIR",
                     help="prepend DIR to the worker's sys.path so an uninstalled "
                          "lerobot_robot_* package becomes importable; repeatable")
+    ap.add_argument("--piper-package", default="lerobot_robot_piper",
+                    help="package that registers the piper robot/teleop types; "
+                         "prefills discover_packages_path in the form")
     ap.add_argument("--dataset-dir", default="~/lerobot_datasets")
     ap.add_argument("--set-roles",
                     default="~/lerobot_teleop/piper_robot_source/set_roles.py")

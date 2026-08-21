@@ -146,6 +146,44 @@ sejong ALL=(root) NOPASSWD: /usr/sbin/ip link set can* down, \
 규칙이 없으면 버튼이 실패하면서 붙여넣을 규칙을 화면에 보여줍니다.
 설정하지 않아도 나머지는 전부 동작하고, CAN은 기존처럼 터미널에서 올리면 됩니다.
 
+### piper 타입이 안 잡힐 때
+
+`invalid choice: 'piper_follower'`가 나오면 로봇 등록 문제입니다.
+
+LeRobot 0.6+는 서드파티 하드웨어를 `sys.path`에서 `lerobot_robot_*` /
+`lerobot_teleoperator_*` / `lerobot_camera_*` 로 시작하는 패키지를 `pkgutil`로 훑어
+등록합니다. **그런데 `pip install -e .`(PEP 660) 로 설치한 패키지는 실제 디렉터리가
+아니라 meta-path finder로 노출돼서 이 훑기에 안 잡힙니다**
+([lerobot#2460](https://github.com/huggingface/lerobot/issues/2460)).
+import은 되는데 등록만 안 되는 상태라 원인을 찾기 어렵습니다.
+
+`~/lerobot_teleop/piper_robot_source`가 정확히 이 경우입니다. `lerobot_robot_piper`가
+editable로 설치돼 있어서, `piper_robot_source` 폴더 안에서 실행할 때만
+(그때는 CWD에 진짜 폴더가 보이므로) 잡혔습니다.
+
+폼의 **`robot.discover_packages_path` / `teleop.discover_packages_path`** 에
+`lerobot_robot_piper` 를 넣으면 해결됩니다 — LeRobot이 파싱 전에 그 패키지를
+import 합니다. 기본값으로 이미 채워져 있습니다.
+
+진단은 `--dry-run`이 해줍니다:
+
+```
+3rd-party 탐색됨 : (없음)
+3rd-party 설치됨 : lerobot_robot_piper
+  ! lerobot_robot_piper: 설치돼 있지만 LeRobot 자동 탐색에 안 잡힙니다 (editable 설치, lerobot#2460).
+    -> --robot.discover_packages_path=lerobot_robot_piper 를 붙이면 등록됩니다
+```
+
+두 목록의 차이가 진단입니다. `pkgutil`만 물어보면 LeRobot의 버그를 그대로
+재현해서 "없음"이라고만 답하므로, `importlib.metadata`에도 물어봅니다.
+
+다른 배치라면 이것들도 있습니다:
+
+| 상황 | 해결 |
+|---|---|
+| 특정 폴더에서 실행해야만 잡힘 | `server.py --workdir ~/lerobot_teleop/piper_robot_source` |
+| 설치 안 된 폴더에 소스만 있음 | `server.py --plugin-path ~/lerobot_teleop/piper_robot_source` |
+
 ### 프리셋
 
 작업(빨간 그릇, 파란 블록…)별로 폼 전체를 저장해두고 불러옵니다.
