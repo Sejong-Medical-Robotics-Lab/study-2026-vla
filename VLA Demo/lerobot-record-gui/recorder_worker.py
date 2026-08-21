@@ -746,10 +746,15 @@ def dry_run(module, lerobot_argv: list[str]) -> int:
     plugins = describe_plugins()
     print(f"3rd-party 탐색됨 : {', '.join(plugins['scanned']) or '(없음)'}")
     print(f"3rd-party 설치됨 : {', '.join(plugins['installed']) or '(없음)'}")
+    named = _discover_args(lerobot_argv)
     for name in plugins["hidden"]:
-        print(f"  ! {name}: 설치돼 있지만 LeRobot 자동 탐색에 안 잡힙니다 "
-              f"(editable 설치, lerobot#2460).")
-        print(f"    -> --robot.discover_packages_path={name} 를 붙이면 등록됩니다")
+        state = "명시적으로 로드됨" if name in named else "등록되지 않음"
+        print(f"  ! {name}: LeRobot 자동 탐색에는 안 잡힙니다 "
+              f"(editable 설치, lerobot#2460) — {state}")
+        # Only advise the flag when it is missing; repeating it under a command
+        # that already carries it reads as "still broken".
+        if name not in named:
+            print(f"    -> --robot.discover_packages_path={name} 를 붙이면 등록됩니다")
     # Load whatever the flags ask for before listing types, the same way
     # record() will -- otherwise the dry run reports the registry as it looks
     # *without* the fix and a working setup still reads as broken.
