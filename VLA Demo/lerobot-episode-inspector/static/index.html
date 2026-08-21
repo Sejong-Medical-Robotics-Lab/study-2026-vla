@@ -6,18 +6,23 @@
 <title>LeRobot Episode Inspector</title>
 <style>
   :root {
-    --bg: #0e1116;
-    --panel: #161b22;
-    --panel-2: #1c2129;
-    --line: #2a313c;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --accent: #4c8dff;
-    --ok: #3fb950;
-    --warn: #d29922;
-    --fail: #f85149;
-    --state: #4c8dff;
-    --action: #f0883e;
+    --bg: #ffffff;
+    --panel: #ffffff;
+    --panel-2: #f1f4f8;
+    --line: #d7dee6;
+    --text: #1b2027;
+    --muted: #5c6672;
+    --accent: #1f6feb;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --fail: #cf222e;
+    --state: #1f6feb;
+    --action: #bc4c00;
+    --cursor: #1b202799;
+    /* Verdict tints — light enough to read 12px text on. */
+    --tint-good: #e4f4e9;
+    --tint-bad: #fdeae8;
+    --tint-unsure: #fdf3e0;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -57,9 +62,19 @@
   .ep {
     padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
     display: grid; grid-template-columns: 8px 1fr auto; gap: 8px; align-items: start;
+    background: var(--rv-tint, var(--panel));
+    box-shadow: inset 4px 0 0 var(--rv-bar, transparent);
   }
-  .ep:hover { background: var(--panel-2); }
-  .ep.sel { background: #1f2937; box-shadow: inset 3px 0 0 var(--accent); }
+  /* Verdict saved with G/B/U colours the whole row. */
+  .ep.rv-good   { --rv-tint: var(--tint-good);   --rv-bar: var(--ok); }
+  .ep.rv-bad    { --rv-tint: var(--tint-bad);    --rv-bar: var(--fail); }
+  .ep.rv-unsure { --rv-tint: var(--tint-unsure); --rv-bar: var(--warn); }
+  .ep.rv-good .rv   { color: var(--ok); }
+  .ep.rv-bad .rv    { color: var(--fail); }
+  .ep.rv-unsure .rv { color: var(--warn); }
+  .ep:hover { filter: brightness(.96); }
+  .ep.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .ep.sel .t { color: var(--accent); }
   .ep .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
   .ep .t { font-weight: 600; font-size: 12px; }
   .ep .s { color: var(--muted); font-size: 11px; overflow: hidden;
@@ -74,7 +89,8 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
   .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
              color: var(--muted); margin: 0; padding: 9px 12px;
-             border-bottom: 1px solid var(--line); font-weight: 600; }
+             border-bottom: 1px solid var(--line); font-weight: 600;
+             background: var(--panel-2); border-radius: 8px 8px 0 0; }
   .card .body { padding: 12px; }
 
   .instr { display: flex; align-items: baseline; gap: 12px; padding: 12px 14px; }
@@ -115,9 +131,16 @@
   .review input[type=text] { flex: 1; min-width: 200px; background: var(--bg);
     border: 1px solid var(--line); color: var(--text); border-radius: 6px;
     padding: 6px 9px; font-family: inherit; font-size: 12px; }
-  .rv-good.active { background: var(--ok); border-color: var(--ok); color: #08130a; }
+  .rv-good.active { background: var(--ok); border-color: var(--ok); color: #fff; }
   .rv-bad.active { background: var(--fail); border-color: var(--fail); color: #fff; }
-  .rv-unsure.active { background: var(--warn); border-color: var(--warn); color: #1a1200; }
+  .rv-unsure.active { background: var(--warn); border-color: var(--warn); color: #fff; }
+
+  /* The verdict card echoes the saved judgement, so G/B/U reads back
+     without looking away from the video. */
+  .card.vd-good   { border-color: var(--ok);   background: var(--tint-good); }
+  .card.vd-bad    { border-color: var(--fail); background: var(--tint-bad); }
+  .card.vd-unsure { border-color: var(--warn); background: var(--tint-unsure); }
+  .card.vd-good h2, .card.vd-bad h2, .card.vd-unsure h2 { background: transparent; }
 
   kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px;
         border-radius: 4px; padding: 0 4px; font-size: 10px; font-family: inherit; }
@@ -201,13 +224,13 @@ function visible() {
 function renderList() {
   const mark = { good: '✔', bad: '✘', unsure: '?', unreviewed: '' };
   $('#eplist').innerHTML = visible().map(e => `
-    <div class="ep ${e.index === S.ep ? 'sel' : ''}" data-i="${e.index}">
+    <div class="ep rv-${e.review} ${e.index === S.ep ? 'sel' : ''}" data-i="${e.index}">
       <div class="dot lvl-${e.qc_level}"></div>
       <div>
         <div class="t">Episode ${e.index}</div>
         <div class="s">${e.duration}s · ${e.length}f · ${escapeHtml(e.instruction) || '<span style="color:var(--fail)">no instruction</span>'}</div>
       </div>
-      <div class="rv" style="color:${e.review === 'good' ? 'var(--ok)' : e.review === 'bad' ? 'var(--fail)' : 'var(--warn)'}">${mark[e.review]}</div>
+      <div class="rv">${mark[e.review]}</div>
     </div>`).join('') || '<div style="padding:16px;color:var(--muted)">해당 없음</div>';
   $('#eplist').querySelectorAll('.ep').forEach(d =>
     d.onclick = () => select(+d.dataset.i));
@@ -283,7 +306,7 @@ function renderEpisode() {
         </div>`).join('')}
     </div>
 
-    <div class="card">
+    <div class="card vd-${d.review.status || 'unreviewed'}" id="vdcard">
       <h2>Verdict</h2>
       <div class="review">
         <button class="btn rv-good ${d.review.status === 'good' ? 'active' : ''}" data-v="good">✔ Good</button>
@@ -344,6 +367,8 @@ async function setReview(status) {
   if (e) e.review = status;
   ['good', 'bad', 'unsure'].forEach(v =>
     $('#main .rv-' + v).classList.toggle('active', v === status));
+  const vd = $('#vdcard');
+  if (vd) vd.className = 'card vd-' + status;
   renderFilters(); renderList();
 }
 
@@ -503,7 +528,9 @@ function drawCursor(f) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, g.w, g.h);
   const x = PAD_L + (f / Math.max(1, S.det.length - 1)) * g.plotW;
-  ctx.strokeStyle = '#ffffff88'; ctx.lineWidth = 1;
+  ctx.strokeStyle = getComputedStyle(document.documentElement)
+    .getPropertyValue('--cursor').trim();
+  ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(x + .5, PAD_T); ctx.lineTo(x + .5, g.h - PAD_B); ctx.stroke();
 }
 
