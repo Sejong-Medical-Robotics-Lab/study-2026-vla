@@ -29,7 +29,7 @@
   body {
     background: var(--bg); color: var(--text);
     font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
-    display: grid; grid-template-columns: 300px 1fr; grid-template-rows: auto 1fr;
+    display: grid; grid-template-columns: 380px 1fr; grid-template-rows: auto 1fr;
     grid-template-areas: "head head" "side main";
   }
 
@@ -93,7 +93,11 @@
              background: var(--panel-2); border-radius: 8px 8px 0 0; }
   .card .body { padding: 12px; }
 
-  .instr { display: flex; align-items: baseline; gap: 12px; padding: 12px 14px; }
+  .instr { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+  .instr .spacer { flex: 1; }
+  .instr .pos { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .instr .btn:disabled { opacity: .4; cursor: default; }
+  .instr .btn:disabled:hover { border-color: var(--line); }
   .instr .tag { font-size: 10px; letter-spacing: .1em; color: var(--muted); }
   .instr .txt { font-size: 17px; font-weight: 500; }
   .instr .txt.empty { color: var(--fail); font-style: italic; font-weight: 400; }
@@ -212,7 +216,7 @@ function renderFilters() {
   $('#filters').innerHTML = Object.entries(counts).map(([k, n]) =>
     `<button class="btn ${S.filter === k ? 'active' : ''}" data-f="${k}">${k} ${n}</button>`).join('');
   $('#filters').querySelectorAll('button').forEach(b =>
-    b.onclick = () => { S.filter = b.dataset.f; renderFilters(); renderList(); });
+    b.onclick = () => { S.filter = b.dataset.f; renderFilters(); renderList(); updateEpNav(); });
 }
 
 function visible() {
@@ -250,12 +254,31 @@ async function select(i) {
   seek(0);
 }
 
+// Episode navigation, shared by the J/K keys and the prev/next buttons.
+// Both walk the *visible* list, so an active filter narrows what they step
+// through -- stepping past either end is a no-op rather than a re-select.
+function jumpEpisode(dir) {
+  const list = visible();
+  const nxt = list[list.findIndex(x => x.index === S.ep) + dir];
+  if (nxt) select(nxt.index);
+}
+
+function updateEpNav() {
+  const prev = $('#prevep');
+  if (!prev) return;
+  const list = visible();
+  const at = list.findIndex(x => x.index === S.ep);
+  prev.disabled = at <= 0;
+  $('#nextep').disabled = at < 0 || at >= list.length - 1;
+  $('#eppos').textContent = at < 0 ? '' : `${at + 1} / ${list.length}`;
+}
+
 function renderEpisode() {
   const d = S.det;
   const videos = d.videos.length
     ? `<div class="videos">${d.videos.map(v => `
         <div class="vwrap">
-          <video id="v-${cssId(v.key)}" preload="auto" muted playsinline
+          <video id="v-${cssId(v.key)}" preload="metadata" muted playsinline
                  src="${v.url}" data-t0="${v.t0}"></video>
           <div class="lbl">${escapeHtml(v.key)}</div>
         </div>`).join('')}</div>`
@@ -265,8 +288,12 @@ function renderEpisode() {
   $('#main').innerHTML = `
     <div class="card">
       <div class="instr">
+        <button class="btn" id="prevep" title="이전 에피소드 (J)">‹ 이전</button>
+        <button class="btn" id="nextep" title="다음 에피소드 (K)">다음 ›</button>
         <span class="tag">INSTRUCTION</span>
         <span class="txt ${d.instruction ? '' : 'empty'}">${escapeHtml(d.instruction) || '(없음 — meta/tasks 확인 필요)'}</span>
+        <span class="spacer"></span>
+        <span class="pos" id="eppos"></span>
       </div>
     </div>
 
@@ -318,6 +345,9 @@ function renderEpisode() {
     </div>`;
 
   $('#play').onclick = () => setPlaying(!S.playing);
+  $('#prevep').onclick = () => jumpEpisode(-1);
+  $('#nextep').onclick = () => jumpEpisode(1);
+  updateEpNav();
   $('#speed').onclick = () => {
     const opts = [0.25, 0.5, 1, 2, 4];
     S.speed = opts[(opts.indexOf(S.speed) + 1) % opts.length];
@@ -540,18 +570,12 @@ window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const d = S.det; if (!d) return;
   const step = (n) => { setPlaying(false); seek(S.t + n / d.fps); };
-  const jump = (dir) => {
-    const list = visible();
-    const at = list.findIndex(x => x.index === S.ep);
-    const nxt = list[Math.max(0, Math.min(list.length - 1, at + dir))];
-    if (nxt) select(nxt.index);
-  };
   switch (e.key.toLowerCase()) {
     case ' ': e.preventDefault(); setPlaying(!S.playing); break;
     case 'arrowright': e.preventDefault(); step(e.shiftKey ? 10 : 1); break;
     case 'arrowleft': e.preventDefault(); step(e.shiftKey ? -10 : -1); break;
-    case 'k': jump(1); break;
-    case 'j': jump(-1); break;
+    case 'k': jumpEpisode(1); break;
+    case 'j': jumpEpisode(-1); break;
     case 'g': setReview('good'); break;
     case 'b': setReview('bad'); break;
     case 'u': setReview('unsure'); break;
