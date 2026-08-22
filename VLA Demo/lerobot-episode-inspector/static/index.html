@@ -195,7 +195,7 @@ const fmt = (t) => {
 };
 
 const S = {
-  lib: null, name: null,          // the dataset currently expanded
+  lib: null, name: null, els: null,   // the dataset currently expanded, and its list nodes
   ds: null, episodes: [], filter: 'all',
   ep: null, det: null,
   t: 0, playing: false, speed: 1, lastTick: 0,
@@ -262,8 +262,21 @@ async function openDataset(name) {
   $('#exportBtn').href = api('/export');
 
   S.episodes = await (await fetch(api('/episodes'))).json();
-  const body = $('#side').querySelector(`.dsgroup[data-name="${CSS.escape(name)}"] .dsbody`);
-  body.innerHTML = '<div class="filters" id="filters"></div><div id="eplist"></div>';
+
+  // Empty every other group first. Two groups holding a list at once means two
+  // elements with the same id, and a document-wide lookup would then find the
+  // one nearest the top of the page rather than the one just opened -- the
+  // episodes would render into whichever dataset happens to be listed first.
+  let body = null;
+  for (const g of $('#side').querySelectorAll('.dsgroup')) {
+    const target = g.dataset.name === name;
+    g.querySelector('.dsbody').innerHTML = target
+      ? '<div class="filters"></div><div class="eplist"></div>'
+      : '<div class="dsloading">읽는 중…</div>';
+    if (target) body = g.querySelector('.dsbody');
+  }
+  // Hold the elements directly, so nothing depends on document order.
+  S.els = { filters: body.querySelector('.filters'), eplist: body.querySelector('.eplist') };
   renderFilters();
   renderList();
   if (S.episodes.length) select(S.episodes[0].index);
@@ -281,9 +294,10 @@ function renderFilters() {
     good: S.episodes.filter(e => e.review === 'good').length,
     bad: S.episodes.filter(e => e.review === 'bad').length,
   };
-  $('#filters').innerHTML = Object.entries(counts).map(([k, n]) =>
+  if (!S.els) return;
+  S.els.filters.innerHTML = Object.entries(counts).map(([k, n]) =>
     `<button class="btn ${S.filter === k ? 'active' : ''}" data-f="${k}">${k} ${n}</button>`).join('');
-  $('#filters').querySelectorAll('button').forEach(b =>
+  S.els.filters.querySelectorAll('button').forEach(b =>
     b.onclick = () => { S.filter = b.dataset.f; renderFilters(); renderList(); updateEpNav(); });
 }
 
@@ -294,8 +308,9 @@ function visible() {
 }
 
 function renderList() {
+  if (!S.els) return;
   const mark = { good: '✔', bad: '✘', unsure: '?', unreviewed: '' };
-  $('#eplist').innerHTML = visible().map(e => `
+  S.els.eplist.innerHTML = visible().map(e => `
     <div class="ep rv-${e.review} ${e.index === S.ep ? 'sel' : ''}" data-i="${e.index}">
       <div class="dot lvl-${e.qc_level}"></div>
       <div>
@@ -304,7 +319,7 @@ function renderList() {
       </div>
       <div class="rv">${mark[e.review]}</div>
     </div>`).join('') || '<div style="padding:16px;color:var(--muted)">해당 없음</div>';
-  $('#eplist').querySelectorAll('.ep').forEach(d =>
+  S.els.eplist.querySelectorAll('.ep').forEach(d =>
     d.onclick = () => select(+d.dataset.i));
 }
 
